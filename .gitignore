@@ -1,6 +1,9 @@
 # deps
 node_modules
 
+# venv
+.venv/
+
 # build
 dist/
 build/
@@ -64,3 +67,5 @@ Icon?
 yarn.lock
 pnpm-lock.yaml
 
+Fork vs Original.diff
+Original MCP PR.diff
