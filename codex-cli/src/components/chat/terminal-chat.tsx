@@ -104,6 +104,7 @@ export default function TerminalChat({
       config,
       instructions: config.instructions,
       approvalPolicy,
+      mcpServers: config.mcpServers, // Added MCP servers
       onReset: () => setPrevItems([]),
       onItem: (item) => {
         log(`onItem: ${JSON.stringify(item)}`);

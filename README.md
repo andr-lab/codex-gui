@@ -333,6 +333,75 @@ Here's a list of all the providers and their default models:
 export GOOGLE_GENERATIVE_AI_API_KEY="your-gemini-api-key-here"
 ```
 
+### MCP Server Integration (External Tools)
+
+The Codex CLI can be extended with additional tools by connecting to external servers that implement the Model Context Protocol (MCP). This allows the agent to leverage custom or third-party functionalities.
+
+To configure MCP servers, add an `mcpServers` array to your `~/.codex/config.yaml` (or `config.json`) file.
+
+**Configuration Example (YAML):**
+
+```yaml
+# ~/.codex/config.yaml
+# ... other configurations ...
+mcpServers:
+  - name: "MyCalculatorServer"  # A user-friendly name for this server
+    url: "http://localhost:3001/mcp" # The full URL to the MCP server's endpoint
+    enabled: true                 # Optional: true by default. Set to false to disable.
+  - name: "AnotherToolsAPI"
+    url: "https://mcp.example.com/api"
+    # 'enabled' defaults to true if omitted
+    # auth: # Optional: For authentication mechanisms
+    #   type: "apiKey" 
+    #   key: "your-secret-api-key" 
+    # # Or for OAuth:
+    # # auth:
+    # #   type: "oauth"
+    # #   clientId: "your-client-id"
+    # #   clientSecret: "your-client-secret"
+```
+
+**JSON Equivalent:**
+For `config.json`, the structure would be:
+```json
+{
+  // ... other configurations ...
+  "mcpServers": [
+    {
+      "name": "MyCalculatorServer",
+      "url": "http://localhost:3001/mcp",
+      "enabled": true
+    },
+    {
+      "name": "AnotherToolsAPI",
+      "url": "https://mcp.example.com/api"
+      // "auth": { "type": "apiKey", "key": "your-secret-api-key" }
+    }
+  ]
+}
+```
+
+**Configuration Fields:**
+
+*   `name` (string, required): A unique, user-friendly name for the server. This name is used internally and helps in identifying tools from different servers.
+*   `url` (string, required): The complete URL to the MCP server's endpoint (e.g., `http://my-mcp-server.com/mcp_endpoint`).
+*   `enabled` (boolean, optional): Defaults to `true`. If set to `false`, this server configuration will be ignored, and its tools will not be loaded.
+*   `auth` (object, optional): Defines authentication details for the server. The `McpClient` currently does not implement special handling for these `auth` types beyond what might be included in the `url` itself (e.g., token in query parameter). The structure is defined for future compatibility or for servers that can interpret these fields if passed through.
+    *   `type`: Can be `"apiKey"` or `"oauth"`.
+    *   For `apiKey`: `key` (string) holding the API key.
+    *   For `oauth`: `clientId` (string) and `clientSecret` (string).
+
+**Tool Usage:**
+
+Tools from all enabled MCP servers are automatically discovered by the agent when it starts. These tools are then made available to the language model.
+
+To prevent naming conflicts and provide clarity, tools from MCP servers are prefixed with `mcp_`, followed by the server `name` you defined in the configuration, and then the actual tool name as provided by the server.
+
+*   **Naming Convention:** `mcp_<serverName>_<actualToolName>`
+*   **Example:** If a server named `MyCalculatorServer` provides a tool called `calculateSum`, the language model will see and use this tool as `mcp_MyCalculatorServer_calculateSum`.
+
+The Codex CLI agent handles the routing of these tool calls to the appropriate MCP server based on this naming convention.
+
 ---
 
 ## FAQ

@@ -1,6 +1,7 @@
 import type { ReviewDecision } from "./review.js";
 import type { ApplyPatchCommand, ApprovalPolicy } from "../../approvals.js";
-import type { AppConfig } from "../config.js";
+import type { AppConfig, McpServerConfig } from "../config.js"; // Added McpServerConfig
+import { McpClient } from "../mcp-client.js"; // Added McpClient
 import type {
   ChatCompletionChunk,
   ChatCompletionMessageParam,
@@ -50,6 +51,7 @@ type AgentLoopParams = {
     command: Array<string>,
     applyPatch: ApplyPatchCommand | undefined,
   ) => Promise<CommandConfirmation>;
+  mcpServers?: McpServerConfig[]; // Added for MCP integration
 };
 
 export class AgentLoop {
@@ -99,6 +101,8 @@ export class AgentLoop {
   private readonly hardAbort = new AbortController();
 
   private onReset: () => void;
+  private mcpClients: Map<string, McpClient> = new Map(); // Added for MCP clients
+  private mcpServers?: McpServerConfig[]; // Added to store mcpServers from params
 
   /**
    * Abort the ongoing request/stream, if any. This allows callers (typically
@@ -199,7 +203,8 @@ export class AgentLoop {
     onLoading,
     getCommandConfirmation,
     onReset,
-  }: AgentLoopParams & { config?: AppConfig }) {
+    mcpServers, // Added for MCP integration
+  }: AgentLoopParams & { config?: AppConfig; mcpServers?: McpServerConfig[] }) { // Added mcpServers to params type
     this.model = model;
     this.instructions = instructions;
     this.approvalPolicy = approvalPolicy;
@@ -219,6 +224,7 @@ export class AgentLoop {
     this.onLoading = onLoading;
     this.getCommandConfirmation = getCommandConfirmation;
     this.onReset = onReset;
+    this.mcpServers = mcpServers || []; // Store MCP servers from parameters
     this.sessionId = getSessionId() || randomUUID().replaceAll("-", "");
     // Configure OpenAI client with optional timeout (ms) from environment
     const timeoutMs = OPENAI_TIMEOUT_MS;
@@ -251,6 +257,90 @@ export class AgentLoop {
       () => this.execAbortController?.abort(),
       { once: true },
     );
+
+    // Initialize MCP Clients
+    this.initializeMcpClients();
+  }
+
+  private async initializeMcpClients(): Promise<void> {
+    if (!this.mcpServers || this.mcpServers.length === 0) {
+      log("[AgentLoop] No MCP servers configured.");
+      return;
+    }
+    log(`[AgentLoop] Initializing ${this.mcpServers.length} MCP clients...`);
+    for (const serverConfig of this.mcpServers) {
+      if (serverConfig.enabled === false) {
+        log(`[AgentLoop] MCP Server ${serverConfig.name} is disabled. Skipping.`);
+        continue;
+      }
+      try {
+        log(`[AgentLoop] Creating MCP client for ${serverConfig.name} (${serverConfig.url})`);
+        const client = new McpClient(serverConfig);
+        await client.connect(); // Assuming connect handles initialization
+        this.mcpClients.set(serverConfig.name, client);
+        log(`[AgentLoop] MCP client for ${serverConfig.name} connected successfully.`);
+      } catch (error: any) {
+        log(`[AgentLoop] Failed to connect to MCP server ${serverConfig.name}: ${error.message}`);
+      }
+    }
+  }
+
+  private async getAvailableTools(): Promise<OpenAI.Chat.Completions.ChatCompletionTool[]> {
+    const nativeTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+      {
+        type: "function",
+        function: {
+          name: "shell",
+          description: "Runs a shell command, and returns its output.",
+          strict: false,
+          parameters: {
+            type: "object",
+            properties: {
+              command: { type: "array", items: { type: "string" } },
+              workdir: {
+                type: "string",
+                description: "The working directory for the command.",
+              },
+              timeout: {
+                type: "number",
+                description: "The maximum time to wait for the command to complete in milliseconds.",
+              },
+            },
+            required: ["command"],
+            additionalProperties: false,
+          },
+        },
+      },
+    ];
+
+    const mcpToolsPromises: Promise<OpenAI.Chat.Completions.ChatCompletionTool[]>[] = [];
+    for (const [serverName, client] of this.mcpClients.entries()) {
+      if (client.getIsConnected()) {
+        mcpToolsPromises.push(
+          client.listTools().then(tools => 
+            tools.map(tool => ({
+              type: "function",
+              function: {
+                name: `mcp_${serverName}_${tool.name}`,
+                description: `[MCP Tool@${serverName}] ${tool.description}`,
+                parameters: tool.parameters as OpenAI.FunctionParameters, 
+              },
+            }))
+          ).catch(error => {
+            log(`[AgentLoop] Failed to list tools from MCP server ${serverName}: ${error.message}`);
+            return []; 
+          })
+        );
+      }
+    }
+    
+    const resolvedMcpToolsArrays = await Promise.all(mcpToolsPromises);
+    const allMcpTools = resolvedMcpToolsArrays.flat();
+    
+    if (allMcpTools.length > 0) {
+        log(`[AgentLoop] Discovered ${allMcpTools.length} tools from all connected MCP servers.`);
+    }
+    return [...nativeTools, ...allMcpTools];
   }
 
   private async handleFunctionCall(
@@ -342,7 +432,30 @@ export class AgentLoop {
     const additionalItems: Array<ChatCompletionMessageParam> = [];
 
     // TODO: allow arbitrary function calls (beyond shell/container.exec)
-    if (name === "container.exec" || name === "shell") {
+    if (name?.startsWith("mcp_")) {
+      const parts = name.split("_");
+      // Example: mcp_MyServer_toolName -> serverName = "MyServer", actualToolName = "toolName"
+      // If tool names can have underscores: mcp_MyServer_tool_name_part2 -> serverName = "MyServer", actualToolName = "tool_name_part2"
+      const serverName = parts[1];
+      const actualToolName = parts.slice(2).join("_");
+      const client = this.mcpClients.get(serverName);
+
+      if (client && client.getIsConnected()) {
+        try {
+          log(`[AgentLoop] Calling MCP tool: ${serverName}.${actualToolName} with args: ${JSON.stringify(args)}`);
+          const result = await client.callTool(actualToolName, args);
+          // Assuming result is JSON serializable or a string
+          outputItem.content = typeof result === 'string' ? result : JSON.stringify(result);
+          log(`[AgentLoop] MCP tool ${serverName}.${actualToolName} executed. Result (first 100 chars): ${outputItem.content.substring(0,100)}`);
+        } catch (error: any) {
+          log(`[AgentLoop] Error calling MCP tool ${serverName}.${actualToolName}: ${error.message}`);
+          outputItem.content = JSON.stringify({ error: `Failed to call MCP tool ${name}: ${error.message}` });
+        }
+      } else {
+        log(`[AgentLoop] MCP client ${serverName} not found or not connected for tool ${name}.`);
+        outputItem.content = JSON.stringify({ error: `MCP client ${serverName} not found or not connected.` });
+      }
+    } else if (name === "container.exec" || name === "shell") {
       const {
         outputText,
         metadata,
@@ -358,7 +471,13 @@ export class AgentLoop {
       if (additionalItemsFromExec) {
         additionalItems.push(...additionalItemsFromExec);
       }
+    } else {
+      // Handle cases where 'name' might be undefined or not match known patterns
+      const toolNameToLog = name || "undefined_tool_name";
+      outputItem.content = `Unknown or unhandled tool: ${toolNameToLog}`;
+      log(`[AgentLoop] Unknown or unhandled tool called: ${toolNameToLog}`);
     }
+
 
     return [outputItem, ...additionalItems];
   }
@@ -494,6 +613,11 @@ export class AgentLoop {
               );
             }
             // eslint-disable-next-line no-await-in-loop
+            const availableTools = await this.getAvailableTools();
+            if (isLoggingEnabled()) {
+              log(`[AgentLoop] Tools provided to LLM: ${JSON.stringify(availableTools.map(t => t.function?.name ?? "unknown_tool_shape"))}`);
+            }
+            // eslint-disable-next-line no-await-in-loop
             stream = await this.oai.chat.completions.create({
               model: this.model,
               stream: true,
@@ -508,34 +632,7 @@ export class AgentLoop {
                 ) as Array<ChatCompletionMessageParam>),
               ],
               reasoning_effort: reasoning,
-              tools: [
-                {
-                  type: "function",
-                  function: {
-                    name: "shell",
-                    description:
-                      "Runs a shell command, and returns its output.",
-                    strict: false,
-                    parameters: {
-                      type: "object",
-                      properties: {
-                        command: { type: "array", items: { type: "string" } },
-                        workdir: {
-                          type: "string",
-                          description: "The working directory for the command.",
-                        },
-                        timeout: {
-                          type: "number",
-                          description:
-                            "The maximum time to wait for the command to complete in milliseconds.",
-                        },
-                      },
-                      required: ["command"],
-                      additionalProperties: false,
-                    },
-                  },
-                },
-              ],
+              tools: availableTools, // Use dynamically fetched tools
             });
             break;
           } catch (error) {

@@ -155,3 +155,122 @@ test("loads and saves approvalMode correctly", () => {
   });
   expect(reloadedConfig.approvalMode).toBe(AutoApprovalMode.FULL_AUTO);
 });
+
+describe("MCP Server Configuration", () => {
+  test("loads config with mcpServers undefined", () => {
+    memfs[testConfigPath] = JSON.stringify({ model: "test-model" }); // mcpServers is undefined
+    const config = loadConfig(testConfigPath, testInstructionsPath, {
+      disableProjectDoc: true,
+      forceApiKeyForTest: "test-api-key",
+    });
+    expect(config.mcpServers).toBeUndefined();
+  });
+
+  test("loads config with mcpServers as empty array", () => {
+    memfs[testConfigPath] = JSON.stringify({ model: "test-model", mcpServers: [] });
+    const config = loadConfig(testConfigPath, testInstructionsPath, {
+      disableProjectDoc: true,
+      forceApiKeyForTest: "test-api-key",
+    });
+    expect(config.mcpServers).toEqual([]);
+  });
+
+  test("loads config with one MCP server entry", () => {
+    const mcpConfig = {
+      model: "test-model",
+      mcpServers: [
+        {
+          name: "TestServer1",
+          url: "http://localhost:8080",
+          enabled: true,
+          auth: { type: "apiKey", key: "test-key" },
+        },
+      ],
+    };
+    memfs[testConfigPath] = JSON.stringify(mcpConfig);
+    const config = loadConfig(testConfigPath, testInstructionsPath, {
+      disableProjectDoc: true,
+      forceApiKeyForTest: "test-api-key",
+    });
+    expect(config.mcpServers).toEqual(mcpConfig.mcpServers);
+  });
+
+  test("loads config with multiple MCP server entries", () => {
+    const mcpConfig = {
+      model: "test-model",
+      mcpServers: [
+        { name: "ServerA", url: "http://server-a.com" },
+        {
+          name: "ServerB",
+          url: "https://server-b.io",
+          enabled: true,
+          auth: { type: "oauth", clientId: "client1", clientSecret: "secret1" },
+        },
+      ],
+    };
+    memfs[testConfigPath] = JSON.stringify(mcpConfig);
+    const config = loadConfig(testConfigPath, testInstructionsPath, {
+      disableProjectDoc: true,
+      forceApiKeyForTest: "test-api-key",
+    });
+    // Expect mcpServers to be an array, and then check specific properties if default 'enabled' is applied
+    expect(config.mcpServers).toBeDefined();
+    expect(config.mcpServers?.length).toBe(2);
+    expect(config.mcpServers?.[0]).toEqual({ name: "ServerA", url: "http://server-a.com" }); // enabled defaults during client init, not loadConfig
+    expect(config.mcpServers?.[1]).toEqual(mcpConfig.mcpServers[1]);
+  });
+
+  test("loads MCP server with enabled: false", () => {
+    const mcpConfig = {
+      mcpServers: [{ name: "DisabledServer", url: "http://disabled.io", enabled: false }],
+    };
+    memfs[testConfigPath] = JSON.stringify(mcpConfig);
+    const config = loadConfig(testConfigPath, testInstructionsPath, {
+      disableProjectDoc: true,
+      forceApiKeyForTest: "test-api-key",
+    });
+    expect(config.mcpServers?.[0]?.enabled).toBe(false);
+  });
+
+  test("loads MCP server with enabled omitted (defaults to true client-side, undefined here)", () => {
+    const mcpConfig = {
+      mcpServers: [{ name: "DefaultEnabledServer", url: "http://default.io" }], // enabled is omitted
+    };
+    memfs[testConfigPath] = JSON.stringify(mcpConfig);
+    const config = loadConfig(testConfigPath, testInstructionsPath, {
+      disableProjectDoc: true,
+      forceApiKeyForTest: "test-api-key",
+    });
+    // loadConfig itself doesn't set default for 'enabled'. It's loaded as is (undefined).
+    // The McpClient or AgentLoop would handle the default if 'enabled' is undefined.
+    expect(config.mcpServers?.[0]?.name).toBe("DefaultEnabledServer");
+    expect(config.mcpServers?.[0]?.url).toBe("http://default.io");
+    expect(config.mcpServers?.[0]?.enabled).toBeUndefined(); 
+  });
+  
+  test("loads MCP server with auth object (apiKey)", () => {
+    const authConfig = { type: "apiKey" as const, key: "secret-api-key" };
+    const mcpConfig = {
+      mcpServers: [{ name: "AuthServerApiKey", url: "http://auth.key", auth: authConfig }],
+    };
+    memfs[testConfigPath] = JSON.stringify(mcpConfig);
+    const config = loadConfig(testConfigPath, testInstructionsPath, {
+      disableProjectDoc: true,
+      forceApiKeyForTest: "test-api-key",
+    });
+    expect(config.mcpServers?.[0]?.auth).toEqual(authConfig);
+  });
+
+  test("loads MCP server with auth object (oauth)", () => {
+    const authConfig = { type: "oauth" as const, clientId: "myClient", clientSecret: "mySecret" };
+    const mcpConfig = {
+      mcpServers: [{ name: "AuthServerOAuth", url: "http://auth.oauth", auth: authConfig }],
+    };
+    memfs[testConfigPath] = JSON.stringify(mcpConfig);
+    const config = loadConfig(testConfigPath, testInstructionsPath, {
+      disableProjectDoc: true,
+      forceApiKeyForTest: "test-api-key",
+    });
+    expect(config.mcpServers?.[0]?.auth).toEqual(authConfig);
+  });
+});
