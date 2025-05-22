@@ -428,6 +428,7 @@ async function runQuietMode({
     onReset: () => {
       /* intentionally ignored in quiet mode */
     },
+    mcpServers: config.mcpServers, // Added MCP servers
   });
 
   const inputItem = await createInputItem(prompt, imagePaths);

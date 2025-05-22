@@ -152,12 +152,13 @@ export type StoredConfig = {
   approvalMode?: AutoApprovalMode;
   fullAutoErrorMode?: FullAutoErrorMode;
   memory?: MemoryConfig;
+  mcpServers?: McpServerConfig[];
 };
 
 // Minimal config written on first run.  An *empty* model string ensures that
 // we always fall back to DEFAULT_MODEL on load, so updates to the default keep
 // propagating to existing users until they explicitly set a model.
-export const EMPTY_STORED_CONFIG: StoredConfig = { model: "" };
+export const EMPTY_STORED_CONFIG: StoredConfig = { model: "", mcpServers: [] };
 
 // Pre‑stringified JSON variant so we don’t stringify repeatedly.
 const EMPTY_CONFIG_JSON = JSON.stringify(EMPTY_STORED_CONFIG, null, 2) + "\n";
@@ -165,6 +166,13 @@ const EMPTY_CONFIG_JSON = JSON.stringify(EMPTY_STORED_CONFIG, null, 2) + "\n";
 export type MemoryConfig = {
   enabled: boolean;
 };
+
+export interface McpServerConfig {
+  name: string;
+  url: string;
+  enabled?: boolean;
+  auth?: { type: "apiKey"; key: string } | { type: "oauth"; clientId: string; clientSecret: string };
+}
 
 // Represents full runtime config, including loaded instructions.
 export type AppConfig = {
@@ -176,6 +184,7 @@ export type AppConfig = {
   approvalMode?: AutoApprovalMode;
   fullAutoErrorMode?: FullAutoErrorMode;
   memory?: MemoryConfig;
+  mcpServers?: McpServerConfig[];
 };
 
 // ---------------------------------------------------------------------------
@@ -460,6 +469,10 @@ export const loadConfig = (
   // fixtures) that don't include a "memory" section.
   if (storedConfig.memory !== undefined) {
     config.memory = storedConfig.memory;
+  }
+
+  if (storedConfig.mcpServers !== undefined) {
+    config.mcpServers = storedConfig.mcpServers;
   }
 
   if (storedConfig.fullAutoErrorMode) {
