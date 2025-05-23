@@ -288,6 +288,10 @@ class Parser {
   }
 }
 
+function normalizeLineEndings(line: string): string {
+  return line.replace(/\r\n/g, "\n");
+}
+
 function find_context_core(
   lines: Array<string>,
   context: Array<string>,
@@ -296,27 +300,45 @@ function find_context_core(
   if (context.length === 0) {
     return [start, 0];
   }
+
+  // 1. Exact match
   for (let i = start; i < lines.length; i++) {
     if (lines.slice(i, i + context.length).join("\n") === context.join("\n")) {
       return [i, 0];
     }
   }
+
+  // 2. Match after normalizing line endings
   for (let i = start; i < lines.length; i++) {
     if (
       lines
         .slice(i, i + context.length)
-        .map((s) => s.trimEnd())
-        .join("\n") === context.map((s) => s.trimEnd()).join("\n")
+        .map(normalizeLineEndings)
+        .join("\n") === context.map(normalizeLineEndings).join("\n")
+    ) {
+      return [i, 0.5];
+    }
+  }
+
+  // 3. Match after normalizing line endings AND trimEnd() on each line
+  for (let i = start; i < lines.length; i++) {
+    if (
+      lines
+        .slice(i, i + context.length)
+        .map((s) => normalizeLineEndings(s).trimEnd())
+        .join("\n") === context.map((s) => normalizeLineEndings(s).trimEnd()).join("\n")
     ) {
       return [i, 1];
     }
   }
+
+  // 4. Match after normalizing line endings AND trim() on each line
   for (let i = start; i < lines.length; i++) {
     if (
       lines
         .slice(i, i + context.length)
-        .map((s) => s.trim())
-        .join("\n") === context.map((s) => s.trim()).join("\n")
+        .map((s) => normalizeLineEndings(s).trim())
+        .join("\n") === context.map((s) => normalizeLineEndings(s).trim()).join("\n")
     ) {
       return [i, 100];
     }
