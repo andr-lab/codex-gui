@@ -2,8 +2,6 @@ import type { ReviewDecision } from "./review.js";
 import type { ApplyPatchCommand, ApprovalPolicy } from "../../approvals.js";
 import type { AppConfig, McpServerConfig } from "../config.js"; // Added McpServerConfig
 import { McpClient } from "../mcp-client.js"; // Added McpClient
-import type { AppConfig, McpServerConfig } from "../config.js"; // Added McpServerConfig
-import { McpClient } from "../mcp-client.js"; // Added McpClient
 import type {
   ChatCompletionChunk,
   ChatCompletionMessageParam,
@@ -54,7 +52,6 @@ type AgentLoopParams = {
     applyPatch: ApplyPatchCommand | undefined,
   ) => Promise<CommandConfirmation>;
   mcpServers?: McpServerConfig[]; // Added for MCP integration
-  mcpServers?: McpServerConfig[]; // Added for MCP integration
 };
 
 export class AgentLoop {
@@ -104,8 +101,6 @@ export class AgentLoop {
   private readonly hardAbort = new AbortController();
 
   private onReset: () => void;
-  private mcpClients: Map<string, McpClient> = new Map(); // Added for MCP clients
-  private mcpServers?: McpServerConfig[]; // Added to store mcpServers from params
   private mcpClients: Map<string, McpClient> = new Map(); // Added for MCP clients
   private mcpServers?: McpServerConfig[]; // Added to store mcpServers from params
 
@@ -218,8 +213,6 @@ export class AgentLoop {
     onReset,
     mcpServers, // Added for MCP integration
   }: AgentLoopParams & { config?: AppConfig; mcpServers?: McpServerConfig[] }) { // Added mcpServers to params type
-    mcpServers, // Added for MCP integration
-  }: AgentLoopParams & { config?: AppConfig; mcpServers?: McpServerConfig[] }) { // Added mcpServers to params type
     this.model = model;
     this.instructions = instructions;
     this.approvalPolicy = approvalPolicy;
@@ -239,7 +232,6 @@ export class AgentLoop {
     this.onLoading = onLoading;
     this.getCommandConfirmation = getCommandConfirmation;
     this.onReset = onReset;
-    this.mcpServers = mcpServers || []; // Store MCP servers from parameters
     this.mcpServers = mcpServers || []; // Store MCP servers from parameters
     this.sessionId = getSessionId() || randomUUID().replaceAll("-", "");
     // Configure OpenAI client with optional timeout (ms) from environment
@@ -518,13 +510,7 @@ export class AgentLoop {
       const toolNameToLog = name || "undefined_tool_name";
       outputItem.content = `Unknown or unhandled tool: ${toolNameToLog}`;
       log(`[AgentLoop] Unknown or unhandled tool called: ${toolNameToLog}`);
-    } else {
-      // Handle cases where 'name' might be undefined or not match known patterns
-      const toolNameToLog = name || "undefined_tool_name";
-      outputItem.content = `Unknown or unhandled tool: ${toolNameToLog}`;
-      log(`[AgentLoop] Unknown or unhandled tool called: ${toolNameToLog}`);
     }
-
 
 
     return [outputItem, ...additionalItems];
@@ -666,11 +652,6 @@ export class AgentLoop {
               log(`[AgentLoop] Tools provided to LLM: ${JSON.stringify(availableTools.map(t => t.function?.name ?? "unknown_tool_shape"))}`);
             }
             // eslint-disable-next-line no-await-in-loop
-            const availableTools = await this.getAvailableTools();
-            if (isLoggingEnabled()) {
-              log(`[AgentLoop] Tools provided to LLM: ${JSON.stringify(availableTools.map(t => t.function?.name ?? "unknown_tool_shape"))}`);
-            }
-            // eslint-disable-next-line no-await-in-loop
             stream = await this.oai.chat.completions.create({
               model: this.model,
               stream: true,
@@ -685,7 +666,6 @@ export class AgentLoop {
                 ) as Array<ChatCompletionMessageParam>),
               ],
               reasoning_effort: reasoning,
-              tools: availableTools, // Use dynamically fetched tools
               tools: availableTools, // Use dynamically fetched tools
             });
             break;

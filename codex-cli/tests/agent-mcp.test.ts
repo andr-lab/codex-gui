@@ -200,7 +200,6 @@ describe("AgentLoop with MCP Integration", () => {
     );
     expect(tools.length).toBe(2);
   });
-
   const createMockChatCompletionMessageParam = (toolName: string, args: any, toolCallId: string = "call_123"): OpenAI.Chat.Completions.ChatCompletionMessageParam => {
     return {
       role: 'assistant',

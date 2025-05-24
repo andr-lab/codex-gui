@@ -105,7 +105,6 @@ describe("McpClient", () => {
     // Check that log contains message about lazy initialization failure
     expect(log).toHaveBeenCalledWith(expect.stringContaining(`[McpClient] Error during lazy initialization for ${invalidServerConfig.name}`));
   });
-
   test("listTools successfully retrieves tools after connection", async () => {
     const client = new McpClient(serverConfig);
     await client.connect(); // Ensure connected
@@ -189,7 +188,6 @@ describe("McpClient", () => {
     const client = new McpClient(serverConfig);
     // Ensure client is not initialized by not calling connect
     await client.disconnect(); // Attempt disconnect
-
     expect(mockSdkClient.disconnect).not.toHaveBeenCalled(); // Should not be called if client was never initialized fully
     expect(client.getIsConnected()).toBe(false);
     expect(log).toHaveBeenCalledWith(`[McpClient] Client for ${serverConfig.name} was not initialized. Nothing to disconnect.`);
@@ -208,7 +206,6 @@ describe("McpClient", () => {
     expect(client.getIsConnected()).toBe(false);
     expect(log).toHaveBeenCalledWith(`[McpClient] Already disconnected from ${serverConfig.name}.`);
   });
-
   test("SDK client 'error' event sets isConnected to false", async () => {
     const client = new McpClient(serverConfig);
     await client.connect();
