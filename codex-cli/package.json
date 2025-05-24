@@ -1,9 +1,9 @@
 {
-  "name": "open-codex",
+  "name": "codex-complete",
   "version": "0.1.31",
   "license": "Apache-2.0",
   "bin": {
-    "open-codex": "dist/cli.js"
+    "codex-complete": "dist/cli.js"
   },
   "type": "module",
   "engines": {
