@@ -2,7 +2,7 @@ import type { ExecInput, ExecResult } from "./sandbox/interface.js";
 import type { SpawnOptions } from "child_process";
 import type { ParseEntry } from "shell-quote";
 
-import { process_patch } from "./apply-patch.js";
+import { process_patch } from "./apply-patch.ts";
 import { SandboxType } from "./sandbox/interface.js";
 import { execWithSeatbelt } from "./sandbox/macos-seatbelt.js";
 import { exec as rawExec } from "./sandbox/raw-exec.js";

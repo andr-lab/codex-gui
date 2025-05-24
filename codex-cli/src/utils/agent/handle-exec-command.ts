@@ -4,7 +4,7 @@ import type { ExecInput } from "./sandbox/interface.js";
 import type { ApplyPatchCommand, ApprovalPolicy } from "../../approvals.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.mjs";
 
-import { exec, execApplyPatch } from "./exec.js";
+import { exec, execApplyPatch } from "./exec.ts";
 import { isLoggingEnabled, log } from "./log.js";
 import { ReviewDecision } from "./review.js";
 import { FullAutoErrorMode } from "../auto-approval-mode.js";
