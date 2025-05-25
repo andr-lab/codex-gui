@@ -6,6 +6,7 @@ import { process_patch } from "./apply-patch.ts";
 import { SandboxType } from "./sandbox/interface.js";
 import { execWithSeatbelt } from "./sandbox/macos-seatbelt.js";
 import { exec as rawExec } from "./sandbox/raw-exec.js";
+import { adaptCommandForPlatform } from "./platform-commands.js"; // Add this import
 import { formatCommandForDisplay } from "../../format-command.js";
 import fs from "fs";
 import os from "os";
@@ -31,23 +32,26 @@ function requiresShell(cmd: Array<string>): boolean {
  * mapped to a non-zero exit code and the error message should be in stderr.
  */
 export function exec(
-  { cmd, workdir, timeoutInMillis }: ExecInput,
+  { cmd: originalCommand, workdir, timeoutInMillis }: ExecInput,
   sandbox: SandboxType,
   abortSignal?: AbortSignal,
 ): Promise<ExecResult> {
-  // This is a temporary measure to understand what are the common base commands
-  // until we start persisting and uploading rollouts
+  const { adaptedCommand, needsShell: adaptedCommandNeedsShell } = adaptCommandForPlatform(originalCommand);
 
   const execForSandbox =
     sandbox === SandboxType.MACOS_SEATBELT ? execWithSeatbelt : rawExec;
 
+  // Determine if shell is needed based on original command structure OR if adapted command requires it
+  const useShell = requiresShell(originalCommand) || adaptedCommandNeedsShell;
+
   const opts: SpawnOptions = {
     timeout: timeoutInMillis || DEFAULT_TIMEOUT_MS,
-    ...(requiresShell(cmd) ? { shell: true } : {}),
+    ...(useShell ? { shell: true } : {}),
     ...(workdir ? { cwd: workdir } : {}),
   };
   const writableRoots = [process.cwd(), os.tmpdir()];
-  return execForSandbox(cmd, opts, writableRoots, abortSignal);
+  // Pass the adaptedCommand to the execution function
+  return execForSandbox(adaptedCommand, opts, writableRoots, abortSignal);
 }
 
 export function execApplyPatch(patchText: string): ExecResult {

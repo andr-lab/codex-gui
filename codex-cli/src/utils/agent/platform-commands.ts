@@ -39,36 +39,55 @@ const OPTION_MAP: Record<string, Record<string, string>> = {
  * On Unix-like systems, this will return the original command.
  *
  * @param command The command array to adapt
- * @returns The adapted command array
+ * @returns An object containing the adapted command array and a boolean indicating if a shell is needed
  */
-export function adaptCommandForPlatform(command: Array<string>): Array<string> {
+export function adaptCommandForPlatform(command: Array<string>): { adaptedCommand: string[], needsShell: boolean } {
   // If not on Windows, return the original command
   if (process.platform !== "win32") {
-    return command;
+    return { adaptedCommand: command, needsShell: false };
   }
 
   // Nothing to adapt if the command is empty
   if (command.length === 0) {
-    return command;
+    return { adaptedCommand: command, needsShell: false };
   }
 
-  const cmd = command[0];
+  const originalCmd = command[0];
+  let needsShellForAdaptedCmd = false;
 
   // If cmd is undefined or the command doesn't need adaptation, return it as is
-  if (!cmd || !COMMAND_MAP[cmd]) {
-    return command;
+  if (!originalCmd || !COMMAND_MAP[originalCmd]) {
+    return { adaptedCommand: command, needsShell: false };
   }
 
   if (isLoggingEnabled()) {
-    log(`Adapting command '${cmd}' for Windows platform`);
+    log(`Adapting command '${originalCmd}' for Windows platform`);
   }
 
   // Create a new command array with the adapted command
   const adaptedCommand = [...command];
-  adaptedCommand[0] = COMMAND_MAP[cmd];
+  adaptedCommand[0] = COMMAND_MAP[originalCmd];
+
+  // Logic for built-ins and special handling for 'touch'
+  // This block is already within the (process.platform === 'win32') check from the top of the function.
+  const windowsShellBuiltins = new Set(['dir', 'type', 'del', 'copy', 'move', 'md', 'rd', 'cd', 'cls']);
+
+  if (originalCmd === 'touch' && adaptedCommand[0] === 'echo.>') {
+      needsShellForAdaptedCmd = true;
+      if (adaptedCommand.length > 1) {
+          // Join arguments for 'echo.>' command, assuming the arguments form the filename
+          adaptedCommand[0] = `echo.>${adaptedCommand.slice(1).join(" ")}`;
+          adaptedCommand.splice(1); 
+      } else {
+          // 'touch' without arguments might map to 'echo.>' which is not a valid standalone command.
+          // This case is left as is, expecting 'touch' to usually have a filename.
+      }
+  } else if (windowsShellBuiltins.has(adaptedCommand[0])) {
+      needsShellForAdaptedCmd = true;
+  }
 
   // Adapt options if needed
-  const optionsForCmd = OPTION_MAP[cmd];
+  const optionsForCmd = OPTION_MAP[originalCmd];
   if (optionsForCmd) {
     for (let i = 1; i < adaptedCommand.length; i++) {
       const option = adaptedCommand[i];
@@ -79,8 +98,8 @@ export function adaptCommandForPlatform(command: Array<string>): Array<string> {
   }
 
   if (isLoggingEnabled()) {
-    log(`Adapted command: ${adaptedCommand.join(" ")}`);
+    log(`Adapted command: ${adaptedCommand.join(" ")}, needsShell: ${needsShellForAdaptedCmd}`);
   }
 
-  return adaptedCommand;
+  return { adaptedCommand, needsShell: needsShellForAdaptedCmd };
 }

@@ -8,7 +8,7 @@ import type {
 } from "child_process";
 
 import { log, isLoggingEnabled } from "../log.js";
-import { adaptCommandForPlatform } from "../platform-commands.js";
+// REMOVE: import { adaptCommandForPlatform } from "../platform-commands.js";
 import { spawn } from "child_process";
 import * as os from "os";
 
@@ -19,24 +19,19 @@ const MAX_BUFFER = 1024 * 100; // 100 KB
  * mapped to a non-zero exit code and the error message should be in stderr.
  */
 export function exec(
-  command: Array<string>,
+  adaptedCommand: Array<string>, // Changed parameter name for clarity
   options: SpawnOptions,
   _writableRoots: Array<string>,
   abortSignal?: AbortSignal,
 ): Promise<ExecResult> {
-  // Adapt command for the current platform (e.g., convert 'ls' to 'dir' on Windows)
-  const adaptedCommand = adaptCommandForPlatform(command);
+  // REMOVE: const adaptedCommand = adaptCommandForPlatform(command);
 
-  if (
-    isLoggingEnabled() &&
-    JSON.stringify(adaptedCommand) !== JSON.stringify(command)
-  ) {
-    log(
-      `Command adapted for platform: ${command.join(
-        " ",
-      )} -> ${adaptedCommand.join(" ")}`,
-    );
-  }
+  // Logging for the received adapted command can be done here if needed,
+  // but it's likely already logged in exec.ts
+  // For example:
+  // if (isLoggingEnabled()) {
+  //   log(`raw-exec executing command: ${adaptedCommand.join(" ")}`);
+  // }
 
   const prog = adaptedCommand[0];
   if (typeof prog !== "string") {
