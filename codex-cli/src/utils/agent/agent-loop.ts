@@ -1259,6 +1259,7 @@ You MUST adhere to the following criteria when executing the task:
 - Showing user code and tool call details is allowed.
 - User instructions may overwrite the *CODING GUIDELINES* section in this developer message.
 - Use the \`apply_patch\` shell command to edit files: {"cmd":["apply_patch","*** Begin Patch\\n*** Update File: path/to/file.py\\n@@ def example():\\n-  pass\\n+  return 123\\n*** End Patch"]}
+- After successfully applying a patch using the \`apply_patch\` command, the tool will notify you that the file content has changed. If you need to perform further operations (like making additional edits or reading specific parts) on a file that was just patched, you MUST first re-read the entire file using the appropriate file reading tool to ensure you are working with its latest version. This is crucial to avoid errors due to outdated context.
 - If completing the user's task requires writing or modifying files:
     - Your code and final answer should follow these *CODING GUIDELINES*:
         - Fix the problem at the root cause rather than applying surface-level patches, when possible.

@@ -316,3 +316,241 @@ test("apply_commit correctly performs move / rename operations", () => {
   expect(writes).toEqual({ "new.txt": "new" });
   expect(removals).toEqual(["old.txt"]);
 });
+
+// --- Tests for find_context_core enhancements (line endings and whitespace) ---
+
+test("process_patch - CRLF in patch context, LF in file content", () => {
+  const originalFileContentLF = "line1\ncontext\nline3";
+  const patchWithCRLFContext = `*** Begin Patch
+*** Update File: a.txt
+@@
+ line1
+-context
++context updated
+ line3
+*** End Patch`.replace(/\n/g, "\r\n"); // Patch context uses CRLF
+
+  const fs = createInMemoryFS({ "a.txt": originalFileContentLF });
+  process_patch(patchWithCRLFContext, fs.openFn, fs.writeFn, fs.removeFn);
+  expect(fs.writes["a.txt"]).toBe("line1\ncontext updated\nline3");
+});
+
+test("process_patch - LF in patch context, CRLF in file content", () => {
+  const originalFileContentCRLF = "line1\r\ncontext\r\nline3";
+  const patchWithLFContext = `*** Begin Patch
+*** Update File: a.txt
+@@
+ line1
+-context
++context updated
+ line3
+*** End Patch`; // Patch context uses LF
+
+  const fs = createInMemoryFS({ "a.txt": originalFileContentCRLF });
+  process_patch(patchWithLFContext, fs.openFn, fs.writeFn, fs.removeFn);
+  // Expect the output to retain the original file's line endings
+  expect(fs.writes["a.txt"]).toBe("line1\r\ncontext updated\r\nline3");
+});
+
+test("process_patch - CRLF in patch and file (baseline for CRLF)", () => {
+  const originalFileContentCRLF = "line1\r\ncontext\r\nline3";
+  const patchWithCRLFContext = `*** Begin Patch
+*** Update File: a.txt
+@@
+ line1
+-context
++context updated
+ line3
+*** End Patch`.replace(/\n/g, "\r\n");
+
+  const fs = createInMemoryFS({ "a.txt": originalFileContentCRLF });
+  process_patch(patchWithCRLFContext, fs.openFn, fs.writeFn, fs.removeFn);
+  expect(fs.writes["a.txt"]).toBe("line1\r\ncontext updated\r\nline3");
+});
+
+test("process_patch - LF in patch and file (baseline for LF)", () => {
+  const originalFileContentLF = "line1\ncontext\nline3";
+  const patchWithLFContext = `*** Begin Patch
+*** Update File: a.txt
+@@
+ line1
+-context
++context updated
+ line3
+*** End Patch`;
+
+  const fs = createInMemoryFS({ "a.txt": originalFileContentLF });
+  process_patch(patchWithLFContext, fs.openFn, fs.writeFn, fs.removeFn);
+  expect(fs.writes["a.txt"]).toBe("line1\ncontext updated\nline3");
+});
+
+test("process_patch - patch context with extra trailing whitespace (LF file)", () => {
+  const originalFileContentLF = "line1\ncontext line\nline3"; // File context has no trailing whitespace
+  const patchWithSpacedContext = `*** Begin Patch
+*** Update File: a.txt
+@@
+ line1
+-context line  
++context line updated
+ line3
+*** End Patch`; // Patch context has trailing whitespace
+
+  const fs = createInMemoryFS({ "a.txt": originalFileContentLF });
+  process_patch(patchWithSpacedContext, fs.openFn, fs.writeFn, fs.removeFn);
+  expect(fs.writes["a.txt"]).toBe("line1\ncontext line updated\nline3");
+});
+
+test("process_patch - patch context with extra leading/trailing whitespace (CRLF file)", () => {
+  const originalFileContentCRLF = "line1\r\ncontext line\r\nline3"; // File context has no surrounding whitespace
+  const patchWithSpacedContextCRLF = `*** Begin Patch
+*** Update File: a.txt
+@@
+ line1
+-  context line  
++context line updated
+ line3
+*** End Patch`.replace(/\n/g, "\r\n"); // Patch context has surrounding whitespace & CRLF
+
+  const fs = createInMemoryFS({ "a.txt": originalFileContentCRLF });
+  process_patch(patchWithSpacedContextCRLF, fs.openFn, fs.writeFn, fs.removeFn);
+  expect(fs.writes["a.txt"]).toBe("line1\r\ncontext line updated\r\nline3");
+});
+
+test("process_patch - patch context with mixed line endings (CRLF in patch) and extra leading whitespace (LF file)", () => {
+  const originalFileContent = "line1\n  start space context\nline3"; // File: LF, context has 2 leading spaces
+  const patch = `*** Begin Patch\r\n*** Update File: a.txt\r\n@@\r\n line1\r\n-    start space context\r\n+  start space context updated\r\n line3\r\n*** End Patch`; // Patch: CRLF, context has 4 leading spaces for delete line
+
+  const fs = createInMemoryFS({ "a.txt": originalFileContent });
+  process_patch(patch, fs.openFn, fs.writeFn, fs.removeFn);
+  expect(fs.writes["a.txt"]).toBe("line1\n  start space context updated\nline3");
+});
+
+test("process_patch - patch context with different indentation (trim should handle)", () => {
+  const originalFileContent = "line1\n  context\nline3"; // File: 2 spaces indent
+  const patch = `*** Begin Patch
+*** Update File: a.txt
+@@
+ line1
+-    context
++  context updated
+ line3
+*** End Patch`; // Patch: 4 spaces indent for delete line. Add line has 2.
+  const fs = createInMemoryFS({ "a.txt": originalFileContent });
+  process_patch(patch, fs.openFn, fs.writeFn, fs.removeFn);
+  expect(fs.writes["a.txt"]).toBe("line1\n  context updated\nline3");
+});
+
+test("process_patch - genuinely different context, should fail despite normalization attempts", () => {
+  const originalFileContent = "line1\nactual context\nline3";
+  const patchWithWrongContext = `*** Begin Patch
+*** Update File: a.txt
+@@
+ line1
+-completely different context\r\n
++new content
+ line3
+*** End Patch`; // Added CRLF to ensure it's not a line ending issue causing false pass
+
+  const fs = createInMemoryFS({ "a.txt": originalFileContent });
+  expect(() => process_patch(patchWithWrongContext, fs.openFn, fs.writeFn, fs.removeFn)
+  ).toThrow(DiffError);
+  // Check for the specific error message if possible and if it's stable
+  expect(() => process_patch(patchWithWrongContext, fs.openFn, fs.writeFn, fs.removeFn)
+  ).toThrow(/Invalid Context/);
+});
+
+test("process_patch - CRLF in patch, LF in file, context at EOF", () => {
+  const originalFileContentLF = "line1\nlast context line";
+  const patchWithCRLFContext = `*** Begin Patch
+*** Update File: a.txt
+@@
+ line1
+-last context line
++last context line updated
+*** End Of File
+*** End Patch`.replace(/\n/g, "\r\n");
+
+  const fs = createInMemoryFS({ "a.txt": originalFileContentLF });
+  process_patch(patchWithCRLFContext, fs.openFn, fs.writeFn, fs.removeFn);
+  expect(fs.writes["a.txt"]).toBe("line1\nlast context line updated");
+});
+
+test("process_patch - LF in patch, CRLF in file, context at EOF", () => {
+  const originalFileContentCRLF = "line1\r\nlast context line";
+  const patchWithLFContext = `*** Begin Patch
+*** Update File: a.txt
+@@
+ line1
+-last context line
++last context line updated
+*** End Of File
+*** End Patch`;
+
+  const fs = createInMemoryFS({ "a.txt": originalFileContentCRLF });
+  process_patch(patchWithLFContext, fs.openFn, fs.writeFn, fs.removeFn);
+  expect(fs.writes["a.txt"]).toBe("line1\r\nlast context line updated");
+});
+
+test("process_patch - patch context with trailing whitespace (LF patch, CRLF file), context at EOF", () => {
+  const originalFileContentCRLF = "line1\r\nlast context line"; // File: CRLF, no trailing whitespace
+  const patchWithSpacedContext = `*** Begin Patch
+*** Update File: a.txt
+@@
+ line1
+-last context line  
++last context line updated
+*** End Of File
+*** End Patch`; // Patch: LF, context has trailing spaces
+
+  const fs = createInMemoryFS({ "a.txt": originalFileContentCRLF });
+  process_patch(patchWithSpacedContext, fs.openFn, fs.writeFn, fs.removeFn);
+  expect(fs.writes["a.txt"]).toBe("line1\r\nlast context line updated");
+});
+
+test("process_patch - patch context with leading whitespace (CRLF patch, LF file), context at EOF", () => {
+  const originalFileContentLF = "line1\nlast context line"; // File: LF, no leading whitespace
+  const patchWithSpacedContext = `*** Begin Patch
+*** Update File: a.txt
+@@
+ line1
+-  last context line
++last context line updated
+*** End Of File
+*** End Patch`.replace(/\n/g, "\r\n"); // Patch: CRLF, context has leading spaces
+
+  const fs = createInMemoryFS({ "a.txt": originalFileContentLF });
+  process_patch(patchWithSpacedContext, fs.openFn, fs.writeFn, fs.removeFn);
+  expect(fs.writes["a.txt"]).toBe("line1\nlast context line updated");
+});
+
+test("process_patch - patch context with only CRLF vs LF difference", () => {
+  const fileContent = "first line\nsecond line\nthird line";
+  const patchContent =
+    "*** Begin Patch\r\n" +
+    "*** Update File: test.txt\r\n" +
+    "@@\r\n" +
+    " first line\r\n" +
+    "-second line\r\n" +
+    "+second line changed\r\n" +
+    " third line\r\n" +
+    "*** End Patch";
+  const fs = createInMemoryFS({ "test.txt": fileContent });
+  process_patch(patchContent, fs.openFn, fs.writeFn, fs.removeFn);
+  expect(fs.writes["test.txt"]).toBe("first line\nsecond line changed\nthird line");
+});
+
+test("process_patch - patch context with LF vs CRLF and trailing space", () => {
+  const fileContent = "first line\r\nsecond line\r\nthird line"; // CRLF
+  const patchContent =
+    "*** Begin Patch\n" + // LF
+    "*** Update File: test.txt\n" +
+    "@@\n" +
+    " first line\n" +
+    "-second line  \n" + // LF and trailing space
+    "+second line changed\n" +
+    " third line\n" +
+    "*** End Patch";
+  const fs = createInMemoryFS({ "test.txt": fileContent });
+  process_patch(patchContent, fs.openFn, fs.writeFn, fs.removeFn);
+  expect(fs.writes["test.txt"]).toBe("first line\r\nsecond line changed\r\nthird line");
+});

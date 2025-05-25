@@ -5,6 +5,10 @@ import type { ApplyPatchCommand, ApprovalPolicy } from "../../approvals.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.mjs";
 
 import { exec, execApplyPatch } from "./exec.ts";
+import {
+  identify_files_added,
+  identify_files_needed,
+} from "./apply-patch.js";
 import { isLoggingEnabled, log } from "./log.js";
 import { ReviewDecision } from "./review.js";
 import { FullAutoErrorMode } from "../auto-approval-mode.js";
@@ -241,7 +245,34 @@ async function execCommand(
       ? execApplyPatch(applyPatchCommand.patch)
       : await exec(execInput, await getSandbox(runInSandbox), abortSignal);
   const duration = Date.now() - start;
-  const { stdout, stderr, exitCode } = execResult;
+  let { stdout, stderr, exitCode } = execResult;
+
+  if (applyPatchCommand != null && exitCode === 0) {
+    const patch = applyPatchCommand.patch;
+    const filesNeeded = identify_files_needed(patch);
+    const filesAdded = identify_files_added(patch);
+    const updatedFiles = patch
+      .split("\n")
+      .filter((line) => line.startsWith("*** Update File: "))
+      .map((line) => line.replace("*** Update File: ", "").trim());
+
+    const allAffectedFiles = Array.from(
+      new Set([...filesNeeded, ...filesAdded, ...updatedFiles]),
+    );
+
+    if (allAffectedFiles.length > 0) {
+      if (allAffectedFiles.length === 1) {
+        stdout = `Patch successfully applied to '${allAffectedFiles[0]}'. The file content has changed. If you need to perform further operations on this file, please re-read it to ensure you have the latest version.`;
+      } else {
+        stdout = `Patch successfully applied. The following files have changed: [${allAffectedFiles.join(", ")}]. Please re-read them if you need to perform further operations.`;
+      }
+    } else {
+      // This case should ideally not happen if a patch was applied successfully
+      // and indicated changes, but as a fallback:
+      stdout =
+        "Patch successfully applied. Please re-read any affected files if necessary.";
+    }
+  }
 
   if (isLoggingEnabled()) {
     log(
