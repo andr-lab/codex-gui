@@ -153,12 +153,23 @@ export type StoredConfig = {
   fullAutoErrorMode?: FullAutoErrorMode;
   memory?: MemoryConfig;
   mcpServers?: McpServerConfig[];
+  // GitHub OAuth credentials
+  // TODO: Consider using environment variables or a more secure storage mechanism
+  // for these secrets in a production environment.
+  githubClientId?: string;
+  // githubClientSecret is removed as it's not used in PKCE flow for public clients.
+  githubAccessToken?: string;
+  githubSelectedRepo?: string; // e.g., "owner/repo"
+  githubSelectedBranch?: string;
 };
 
 // Minimal config written on first run.  An *empty* model string ensures that
 // we always fall back to DEFAULT_MODEL on load, so updates to the default keep
 // propagating to existing users until they explicitly set a model.
-export const EMPTY_STORED_CONFIG: StoredConfig = { model: "", mcpServers: [] };
+export const EMPTY_STORED_CONFIG: StoredConfig = {
+  model: "",
+  mcpServers: [],
+};
 
 // Pre‑stringified JSON variant so we don’t stringify repeatedly.
 const EMPTY_CONFIG_JSON = JSON.stringify(EMPTY_STORED_CONFIG, null, 2) + "\n";
@@ -185,6 +196,12 @@ export type AppConfig = {
   fullAutoErrorMode?: FullAutoErrorMode;
   memory?: MemoryConfig;
   mcpServers?: McpServerConfig[];
+  // GitHub OAuth credentials
+  githubClientId?: string;
+  // githubClientSecret is removed.
+  githubAccessToken?: string;
+  githubSelectedRepo?: string;
+  githubSelectedBranch?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -424,6 +441,11 @@ export const loadConfig = (
     baseURL: derivedBaseURL,
     instructions: loadInstructions(instructionsPath, options),
     approvalMode: storedConfig.approvalMode,
+    githubClientId: storedConfig.githubClientId,
+    // githubClientSecret is removed.
+    githubAccessToken: storedConfig.githubAccessToken,
+    githubSelectedRepo: storedConfig.githubSelectedRepo,
+    githubSelectedBranch: storedConfig.githubSelectedBranch,
   };
 
   // -----------------------------------------------------------------------
@@ -511,6 +533,11 @@ export const saveConfig = (
   const configToSave: StoredConfig = {
     model: config.model,
     approvalMode: config.approvalMode,
+    githubClientId: config.githubClientId,
+    // githubClientSecret is removed.
+    githubAccessToken: config.githubAccessToken,
+    githubSelectedRepo: config.githubSelectedRepo,
+    githubSelectedBranch: config.githubSelectedBranch,
   };
   if (ext === ".yaml" || ext === ".yml") {
     writeFileSync(targetPath, dumpYaml(configToSave), "utf-8");

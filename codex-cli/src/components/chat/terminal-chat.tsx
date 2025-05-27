@@ -22,8 +22,11 @@ import ApprovalModeOverlay from "../approval-mode-overlay.js";
 import HelpOverlay from "../help-overlay.js";
 import HistoryOverlay from "../history-overlay.js";
 import ModelOverlay from "../model-overlay.js";
+import { ConfirmInput } from "@inkjs/ui"; // Import ConfirmInput
 import { Box, Text } from "ink";
 import React, { useEffect, useMemo, useState } from "react";
+import { getGitHubAccessToken } from "../../utils/github-auth.js"; // For publishing
+import { publishToGitHub } from "../../utils/git-utils.js"; // For publishing
 import { inspect } from "util";
 
 type Props = {
@@ -32,6 +35,7 @@ type Props = {
   imagePaths?: Array<string>;
   approvalPolicy: ApprovalPolicy;
   fullStdout: boolean;
+  effectiveCwd?: string; // New prop for cloned repo path
 };
 
 const colorsByPolicy: Record<ApprovalPolicy, ColorName | undefined> = {
@@ -46,6 +50,7 @@ export default function TerminalChat({
   imagePaths: _initialImagePaths,
   approvalPolicy: initialApprovalPolicy,
   fullStdout,
+  effectiveCwd, // Destructure new prop
 }: Props): React.ReactElement {
   const [model, setModel] = useState<string>(config.model);
   const [prevItems, setPrevItems] = useState<Array<ChatCompletionMessageParam>>(
@@ -64,11 +69,17 @@ export default function TerminalChat({
     "none" | "history" | "model" | "approval" | "help"
   >("none");
 
+  // Publishing state
+  const [showPublishConfirm, setShowPublishConfirm] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
+  const [publishSuccessMessage, setPublishSuccessMessage] = useState<string | null>(null);
+
   const [initialPrompt, setInitialPrompt] = useState(_initialPrompt);
   const [initialImagePaths, setInitialImagePaths] =
     useState(_initialImagePaths);
 
-  const PWD = React.useMemo(() => shortCwd(), []);
+  const PWD = React.useMemo(() => shortCwd(effectiveCwd), [effectiveCwd]);
 
   // Keep a single AgentLoop instance alive across renders;
   // recreate only when model/instructions/approvalPolicy change.
@@ -104,6 +115,7 @@ export default function TerminalChat({
       config,
       instructions: config.instructions,
       approvalPolicy,
+      effectiveCwd, // Pass effectiveCwd to AgentLoop
       mcpServers: config.mcpServers, // Added MCP servers
       onReset: () => setPrevItems([]),
       onItem: (item) => {
@@ -181,6 +193,64 @@ export default function TerminalChat({
       log(`agentRef.current is now ${Boolean(agent)}`);
     }
   }, [agent]);
+
+
+  const handlePublishRequest = () => {
+    if (!effectiveCwd) {
+      setPublishError("Cannot publish: No cloned repository context available.");
+      return;
+    }
+    if (!config.githubSelectedRepo) {
+      setPublishError("Cannot publish: No GitHub repository is selected in configuration.");
+      return;
+    }
+    const token = getGitHubAccessToken();
+    if (!token) {
+      setPublishError("Cannot publish: GitHub access token not found. Please authenticate using `codex auth github`.");
+      return;
+    }
+    // Clear previous messages before showing confirm
+    setPublishError(null);
+    setPublishSuccessMessage(null);
+    setShowPublishConfirm(true);
+  };
+
+  const executePublish = async () => {
+    if (!effectiveCwd || !config.githubSelectedRepo) {
+      setPublishError("Missing repository context or selection for publishing.");
+      setShowPublishConfirm(false);
+      return;
+    }
+    const token = getGitHubAccessToken();
+    if (!token) {
+      setPublishError("GitHub token missing, cannot publish.");
+      setShowPublishConfirm(false);
+      return;
+    }
+
+    setIsPublishing(true);
+    setPublishError(null);
+    setPublishSuccessMessage(null);
+
+    const newBranchName = `codex-updates-${Date.now()}`;
+    const commitMessage = "Codex AI updates";
+
+    try {
+      const successMsg = await publishToGitHub(
+        effectiveCwd,
+        config.githubSelectedRepo,
+        newBranchName,
+        commitMessage,
+        token,
+      );
+      setPublishSuccessMessage(successMsg);
+    } catch (error) {
+      setPublishError(error instanceof Error ? error.message : "Unknown error during publishing.");
+    } finally {
+      setIsPublishing(false);
+      setShowPublishConfirm(false);
+    }
+  };
 
   // ---------------------------------------------------------------------
   // Dynamic layout constraints – keep total rendered rows <= terminal rows
@@ -267,7 +337,8 @@ export default function TerminalChat({
             openModelOverlay={() => setOverlayMode("model")}
             openApprovalOverlay={() => setOverlayMode("approval")}
             openHelpOverlay={() => setOverlayMode("help")}
-            active={overlayMode === "none"}
+            onPublishRequest={handlePublishRequest} // Pass handler
+            active={overlayMode === "none" && !showPublishConfirm && !isPublishing} // Input active if not in overlays or publishing
             interruptAgent={() => {
               if (!agent) {
                 return;
@@ -361,6 +432,34 @@ export default function TerminalChat({
 
         {overlayMode === "help" && (
           <HelpOverlay onExit={() => setOverlayMode("none")} />
+        )}
+
+        {/* Publishing UI Elements */}
+        {showPublishConfirm && (
+          <Box flexDirection="column" marginTop={1} borderStyle="round" padding={1}>
+            <Text>Do you want to publish these changes to a new branch on GitHub ({config.githubSelectedRepo})?</Text>
+            <ConfirmInput
+              onConfirm={executePublish}
+              onCancel={() => setShowPublishConfirm(false)}
+              defaultChoice="cancel"
+            />
+          </Box>
+        )}
+        {isPublishing && (
+          <Box marginTop={1}>
+            <Text><Spinner /> Publishing changes to GitHub...</Text>
+          </Box>
+        )}
+        {publishError && (
+          <Box marginTop={1} flexDirection="column">
+            <Text color="red">Publishing Error: {publishError}</Text>
+            <Text dimColor>You might need to commit/push manually from: {effectiveCwd}</Text>
+          </Box>
+        )}
+        {publishSuccessMessage && (
+          <Box marginTop={1} flexDirection="column">
+            <Text color="green">{publishSuccessMessage}</Text>
+          </Box>
         )}
       </Box>
     </Box>

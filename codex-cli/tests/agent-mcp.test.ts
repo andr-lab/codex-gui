@@ -308,6 +308,7 @@ describe("AgentLoop with MCP Integration", () => {
   });
 
   test("handleFunctionCall: Native shell tool", async () => {
+    const mockGetCommandConfirmationFn = vi.fn();
     const agent = new AgentLoop({
         model: minimalAppConfig.model,
         config: minimalAppConfig,
@@ -315,32 +316,26 @@ describe("AgentLoop with MCP Integration", () => {
         onItem: vi.fn(),
         onLoading: vi.fn(),
         onReset: vi.fn(),
-        getCommandConfirmation: vi.fn(),
+        getCommandConfirmation: mockGetCommandConfirmationFn,
         mcpServers: []
     });
     await new Promise(process.nextTick);
 
     const shellCommandArgs = { command: ["ls", "-l"] };
     const toolCallItem = createMockChatCompletionMessageParam("shell", shellCommandArgs);
-
-    // We mocked handleExecCommand, so we expect it to be called.
     await agent["handleFunctionCall"](toolCallItem);
 
-    // Aggiorna questa asserzione per riflettere ciò che mockHandleExecCommand riceve effettivamente
-    // Basato sul tuo log di errore:
     expect(mockHandleExecCommand).toHaveBeenCalledWith(
-      expect.objectContaining({ // Usa expect.objectContaining per flessibilità
-        cmd: ["ls", "-l"],
-        // timeoutInMillis: undefined, // Includi se sono sempre presenti
-        // workdir: undefined,        // Includi se sono sempre presenti
+      expect.objectContaining({
+        cmd: shellCommandArgs.command,
+        timeoutInMillis: undefined,
+        workdir: undefined,
       }),
-      expect.objectContaining({ // appConfig
-        apiKey: "test-key",
-        model: "test-model",
-      }),
+      expect.objectContaining(minimalAppConfig),
       "suggest",          // approvalPolicy
-      expect.any(Function), // getCommandConfirmation
-      undefined           // abortSignal (o expect.anything() se può variare)
+      mockGetCommandConfirmationFn, // getCommandConfirmation
+      undefined,          // abortSignal
+      undefined           // Extra undefined argument
     );
   });
 

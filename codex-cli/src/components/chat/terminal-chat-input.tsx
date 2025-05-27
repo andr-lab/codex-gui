@@ -54,6 +54,7 @@ export default function TerminalChatInput({
   openHelpOverlay: () => void;
   interruptAgent: () => void;
   active: boolean;
+  onPublishRequest: () => void; // New prop
 }): React.ReactElement {
   const app = useApp();
   const [selectedSuggestion, setSelectedSuggestion] = useState<number>(0);
@@ -131,6 +132,12 @@ export default function TerminalChatInput({
     async (value: string) => {
       const inputValue = value.trim();
       if (!inputValue) {
+        return;
+      }
+
+      if (inputValue === "/publish") {
+        setInput("");
+        onPublishRequest(); // Call the new prop
         return;
       }
 
@@ -240,6 +247,7 @@ export default function TerminalChatInput({
       openApprovalOverlay,
       openModelOverlay,
       openHelpOverlay,
+      onPublishRequest, // Add to dependencies if it could change, though likely stable
     ],
   );
 

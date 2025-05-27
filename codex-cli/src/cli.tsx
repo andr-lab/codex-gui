@@ -17,6 +17,8 @@ import { AgentLoop } from "./utils/agent/agent-loop";
 import { initLogger } from "./utils/agent/log";
 import { ReviewDecision } from "./utils/agent/review";
 import { AutoApprovalMode } from "./utils/auto-approval-mode";
+// Updated import for Device Flow
+import { authenticateWithGitHubDeviceFlow } from "./utils/github-auth.js"; 
 import { checkForUpdates } from "./utils/check-updates";
 import {
   loadConfig,
@@ -51,6 +53,7 @@ const cli = meow(
   Usage
     $ codex [options] <prompt>
     $ codex completion <bash|zsh|fish>
+    $ codex auth github
 
   Options
     -h, --help                 Show usage and exit
@@ -69,6 +72,10 @@ const cli = meow(
     --project-doc <file>       Include an additional markdown file at <file> as context
     --full-stdout              Do not truncate stdout/stderr from command outputs
 
+  GitHub Integration Options
+    --github-repo <owner/repo> Specify the GitHub repository (e.g., "openai/codex")
+    --github-branch <branch>   Specify the branch for the GitHub repository
+
   Dangerous options
     --dangerously-auto-approve-everything
                                Skip all confirmation prompts and execute commands without
@@ -83,6 +90,8 @@ const cli = meow(
     $ codex "Write and run a python program that prints ASCII art"
     $ codex -q "fix build issues"
     $ codex completion bash
+    $ codex auth github
+    $ codex --github-repo "yourname/yourproject" --github-branch "feature-branch" "Implement feature X"
 `,
   {
     importMeta: import.meta,
@@ -147,12 +156,39 @@ const cli = meow(
         description: `Run in full-context editing approach. The model is given the whole code
           directory as context and performs changes in one go without acting.`,
       },
+      githubRepo: {
+        type: "string",
+        description: "Specify the GitHub repository (e.g., \"owner/repo\")",
+      },
+      githubBranch: {
+        type: "string",
+        description: "Specify the branch for the GitHub repository",
+      },
     },
   },
 );
 
-// Handle 'completion' subcommand before any prompting or API calls
-if (cli.input[0] === "completion") {
+// Handle 'auth github' command: This should be checked early.
+if (cli.input[0] === "auth" && cli.input[1] === "github") {
+  (async () => {
+    try {
+      // authenticateWithGitHubDeviceFlow already logs instructions (user_code, verification_uri)
+      // It will resolve if token is obtained and saved, or reject on error/timeout.
+      await authenticateWithGitHubDeviceFlow(); 
+      // If it resolves, means success. A message is already logged by authenticateWithGitHubDeviceFlow.
+      console.log("\n✅ Successfully authenticated with GitHub!");
+      process.exit(0);
+    } catch (error: any) {
+      // authenticateWithGitHubDeviceFlow should ideally log specific errors.
+      // Here, we catch any error it throws to ensure graceful exit.
+      console.error(`\n❌ GitHub authentication failed: ${error.message || "Unknown error."}`);
+      console.error("Please ensure you have correctly set up your GitHub OAuth App Client ID in the config,");
+      console.error("and that you complete the authorization process in your browser within the time limit.");
+      process.exit(1);
+    }
+  })();
+} else if (cli.input[0] === "completion") {
+  // Handle 'completion' subcommand before any prompting or API calls
   const shell = cli.input[1] || "bash";
   const scripts: Record<string, string> = {
     bash: `# bash completion for codex
@@ -181,14 +217,12 @@ complete -c codex -a '(_fish_complete_path)' -d 'file path'`,
   // eslint-disable-next-line no-console
   console.log(script);
   process.exit(0);
-}
-// Show help if requested
-if (cli.flags.help) {
+} else if (cli.flags.help) {
+  // Show help if requested
   cli.showHelp();
-}
-
-// Handle config flag: open instructions file in editor and exit
-if (cli.flags.config) {
+  process.exit(0);
+} else if (cli.flags.config) {
+  // Handle config flag: open instructions file in editor and exit
   // Ensure configuration and instructions file exist
   try {
     loadConfig();
@@ -216,14 +250,33 @@ let config = loadConfig(undefined, undefined, {
   isFullContext: fullContextMode,
 });
 
-const prompt = cli.input[0];
+const prompt = cli.input[0]; // This will be undefined if 'auth github' was handled, which is fine.
 const model = cli.flags.model;
 const imagePaths = cli.flags.image as Array<string> | undefined;
+  const cliGithubRepo = cli.flags.githubRepo as string | undefined;
+  const cliGithubBranch = cli.flags.githubBranch as string | undefined;
+
+  // Validate GitHub flags
+  if (cliGithubBranch && !cliGithubRepo) {
+    console.error(
+      "Error: --github-branch cannot be used without --github-repo.",
+    );
+    process.exit(1);
+  }
+  if (cliGithubRepo && !/^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+$/.test(cliGithubRepo)) {
+    console.error(
+      "Error: Invalid --github-repo format. Expected 'owner/repo'.",
+    );
+    process.exit(1);
+  }
 
 config = {
   ...config,
   model: model ?? config.model,
   provider: provider ?? config.provider,
+    // If CLI flags are provided, they override config for githubSelectedRepo/Branch for this session
+    // These won't be saved back to the config file by default.
+    // app.tsx will need to prioritize these CLI-provided values.
 };
 
 // Check for updates after loading config
@@ -249,6 +302,10 @@ if (cli.flags.view) {
 
 // If we are running in --fullcontext mode, do that and exit.
 if (fullContextMode) {
+  if (!prompt) {
+    console.error("Error: Full context mode requires a prompt.");
+    process.exit(1);
+  }
   await runSinglePass({
     originalPrompt: prompt,
     config,
@@ -290,6 +347,14 @@ if (quietMode) {
   process.exit(0);
 }
 
+// If we reach here, it means we are not in 'auth github', 'completion', 'help', 'config', 
+// 'fullContext', or 'quiet' mode. So a prompt is expected for the interactive app.
+if (!prompt && !rollout) {
+  cli.showHelp(); // Show help if no prompt is provided and not viewing a rollout
+  process.exit(1);
+}
+
+
 // Default to the "suggest" policy.
 // Determine the approval policy to use in interactive mode.
 //
@@ -314,12 +379,14 @@ preloadModels(config);
 
 const instance = render(
   <App
-    prompt={prompt}
+    prompt={prompt} // prompt can be undefined here if it's a rollout view
     config={config}
     rollout={rollout}
     imagePaths={imagePaths}
     approvalPolicy={approvalPolicy}
     fullStdout={fullStdout}
+    cliGithubRepo={cliGithubRepo}
+    cliGithubBranch={cliGithubBranch}
   />,
   {
     patchConsole: process.env["DEBUG"] ? false : true,

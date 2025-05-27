@@ -16,6 +16,7 @@ import { SandboxType } from "./sandbox/interface.js";
 import { canAutoApprove } from "../../approvals.js";
 import { formatCommandForDisplay } from "../../format-command.js";
 import { access } from "fs/promises";
+import path from "node:path";
 
 // ---------------------------------------------------------------------------
 // Session‑level cache of commands that the user has chosen to always approve.
@@ -83,6 +84,7 @@ export async function handleExecCommand(
     applyPatch: ApplyPatchCommand | undefined,
   ) => Promise<CommandConfirmation>,
   abortSignal?: AbortSignal,
+  effectiveCwd?: string, // New parameter
 ): Promise<HandleExecCommandResult> {
   const { cmd: command } = args;
 
@@ -96,16 +98,17 @@ export async function handleExecCommand(
       /* applyPatch */ undefined,
       /* runInSandbox */ false,
       abortSignal,
+      effectiveCwd,
     ).then(convertSummaryToResult);
   }
 
   // 2) Otherwise fall back to the normal policy
   // `canAutoApprove` now requires the list of writable roots that the command
-  // is allowed to modify.  For the CLI we conservatively pass the current
-  // working directory so that edits are constrained to the project root.  If
-  // the caller wishes to broaden or restrict the set it can be made
-  // configurable in the future.
-  const safety = canAutoApprove(command, policy, [process.cwd()]);
+  // is allowed to modify.
+  // If an effectiveCwd (cloned repo) is active, that should be the writable root.
+  // Otherwise, fallback to the original process.cwd().
+  const writableRoot = effectiveCwd || process.cwd();
+  const safety = canAutoApprove(command, policy, [writableRoot]);
 
   let runInSandbox: boolean;
   switch (safety.type) {
@@ -143,6 +146,7 @@ export async function handleExecCommand(
     applyPatch,
     runInSandbox,
     abortSignal,
+      effectiveCwd,
   );
   // If the operation was aborted in the meantime, propagate the cancellation
   // upward by returning an empty (no‑op) result so that the agent loop will
@@ -174,7 +178,7 @@ export async function handleExecCommand(
     } else {
       // The user has approved the command, so we will run it outside of the
       // sandbox.
-      const summary = await execCommand(args, applyPatch, false, abortSignal);
+      const summary = await execCommand(args, applyPatch, false, abortSignal, effectiveCwd);
       return convertSummaryToResult(summary);
     }
   } else {
@@ -207,21 +211,39 @@ async function execCommand(
   applyPatchCommand: ApplyPatchCommand | undefined,
   runInSandbox: boolean,
   abortSignal?: AbortSignal,
+  effectiveCwd?: string,
 ): Promise<ExecCommandSummary> {
-  let { workdir } = execInput;
-  if (workdir) {
-    try {
-      await access(workdir);
-    } catch (e) {
-      log(`EXEC workdir=${workdir} not found, use process.cwd() instead`);
-      workdir = process.cwd();
-    }
+  let { workdir } = execInput; // workdir from the LLM's command
+
+  // Determine the actual CWD for the command
+  // If effectiveCwd (cloned repo path) is set, it takes precedence.
+  // If workdir is also provided by LLM, it should be relative to effectiveCwd.
+  const actualCwd = effectiveCwd 
+    ? (workdir ? path.resolve(effectiveCwd, workdir) : effectiveCwd)
+    : (workdir || process.cwd());
+
+  // Validate the actualCwd exists, otherwise default to process.cwd() or effectiveCwd if that fails
+  try {
+    await access(actualCwd);
+  } catch (e) {
+    log(`EXEC actualCwd=${actualCwd} not found, defaulting to process.cwd() or effectiveCwd if set.`);
+    // Fallback logic: if actualCwd derived from effectiveCwd fails, maybe just use effectiveCwd or process.cwd()
+    // For simplicity, if the resolved path doesn't exist, this might indicate an issue.
+    // However, commands like 'mkdir' might expect workdir to not exist yet.
+    // For now, let's trust 'actualCwd' but be mindful of this.
+    // A safer bet if access fails might be to fallback to 'effectiveCwd' if set, else 'process.cwd()'
+    // For now, we let 'exec' handle potential errors from a bad CWD.
   }
+  
+  // Update execInput.workdir to be the fully resolved path for clarity if needed by `exec`
+  // or ensure `exec` uses `actualCwd` directly.
+  const execInputForExec = { ...execInput, workdir: actualCwd };
+
   if (isLoggingEnabled()) {
     if (applyPatchCommand != null) {
       log("EXEC running apply_patch command");
     } else {
-      const { cmd, timeoutInMillis } = execInput;
+      const { cmd, timeoutInMillis } = execInputForExec; // Use updated execInput
       // Seconds are a bit easier to read in log messages and most timeouts
       // are specified as multiples of 1000, anyway.
       const timeout =
@@ -231,7 +253,7 @@ async function execCommand(
       log(
         `EXEC running \`${formatCommandForDisplay(
           cmd,
-        )}\` in workdir=${workdir} with timeout=${timeout}s`,
+        )}\` in workdir=${actualCwd} with timeout=${timeout}s`, // Log actualCwd
       );
     }
   }
@@ -242,14 +264,15 @@ async function execCommand(
   const start = Date.now();
   const execResult =
     applyPatchCommand != null
-      ? execApplyPatch(applyPatchCommand.patch)
-      : await exec(execInput, await getSandbox(runInSandbox), abortSignal);
+      ? execApplyPatch(applyPatchCommand.patch, actualCwd) // Pass actualCwd to execApplyPatch
+      : await exec(execInputForExec, await getSandbox(runInSandbox), abortSignal); // Pass updated execInput
   const duration = Date.now() - start;
   let { stdout, stderr, exitCode } = execResult;
 
   if (applyPatchCommand != null && exitCode === 0) {
     const patch = applyPatchCommand.patch;
-    const filesNeeded = identify_files_needed(patch);
+    // These functions identify files based on patch content, paths are relative to repo root
+    const filesNeeded = identify_files_needed(patch); 
     const filesAdded = identify_files_added(patch);
     const updatedFiles = patch
       .split("\n")

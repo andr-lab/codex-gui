@@ -10,6 +10,7 @@ import { adaptCommandForPlatform } from "./platform-commands.js"; // Add this im
 import { formatCommandForDisplay } from "../../format-command.js";
 import fs from "fs";
 import os from "os";
+import path from 'node:path';
 import { parse } from "shell-quote";
 
 const DEFAULT_TIMEOUT_MS = 10_000; // 10 seconds
@@ -54,16 +55,19 @@ export function exec(
   return execForSandbox(adaptedCommand, opts, writableRoots, abortSignal);
 }
 
-export function execApplyPatch(patchText: string): ExecResult {
+export function execApplyPatch(patchText: string, cwd: string): ExecResult {
   // This is a temporary measure to understand what are the common base commands
   // until we start persisting and uploading rollouts
 
   try {
+    // process_patch will now need to handle paths relative to cwd
     const result = process_patch(
       patchText,
-      (p) => fs.readFileSync(p, "utf8"),
-      (p, c) => fs.writeFileSync(p, c, "utf8"),
-      (p) => fs.unlinkSync(p),
+      (p) => fs.readFileSync(path.resolve(cwd, p), "utf8"),
+      (p, c) => fs.writeFileSync(path.resolve(cwd, p), c, "utf8"),
+      (p) => fs.unlinkSync(path.resolve(cwd, p)),
+      // cwd parameter removed from process_patch call as it's not used by process_patch
+      // when file operation functions are already CWD-aware.
     );
     return {
       stdout: result,

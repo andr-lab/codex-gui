@@ -52,6 +52,7 @@ type AgentLoopParams = {
     applyPatch: ApplyPatchCommand | undefined,
   ) => Promise<CommandConfirmation>;
   mcpServers?: McpServerConfig[]; // Added for MCP integration
+  effectiveCwd?: string; // For cloned repo path
 };
 
 export class AgentLoop {
@@ -99,6 +100,7 @@ export class AgentLoop {
   private terminated = false;
   /** Master abort controller – fires when terminate() is invoked. */
   private readonly hardAbort = new AbortController();
+  private readonly effectiveCwd?: string;
 
   private onReset: () => void;
   private mcpClients: Map<string, McpClient> = new Map(); // Added for MCP clients
@@ -212,10 +214,12 @@ export class AgentLoop {
     getCommandConfirmation,
     onReset,
     mcpServers, // Added for MCP integration
-  }: AgentLoopParams & { config?: AppConfig; mcpServers?: McpServerConfig[] }) { // Added mcpServers to params type
+    effectiveCwd,
+  }: AgentLoopParams & { config?: AppConfig; mcpServers?: McpServerConfig[], effectiveCwd?: string }) {
     this.model = model;
     this.instructions = instructions;
     this.approvalPolicy = approvalPolicy;
+    this.effectiveCwd = effectiveCwd;
 
     // If no `config` has been provided we derive a minimal stub so that the
     // rest of the implementation can rely on `this.config` always being a
@@ -500,6 +504,7 @@ export class AgentLoop {
         this.approvalPolicy,
         this.getCommandConfirmation,
         this.execAbortController?.signal,
+        this.effectiveCwd, // Pass effectiveCwd
       );
       outputItem.content = JSON.stringify({ output: outputText, metadata });
       if (additionalItemsFromExec) {
