@@ -5,7 +5,7 @@ exports[`Check for updates > should outputs the update message when package is o
    ╭──────────────────────────────────────────────────────────╮
    │                                                          │
    │             Update available! 1.0.0 → 2.0.0.             │
-   │   To update, run: npm install -g open-codex to update.   │
+   │   To update, run: npm install -g codex-complete to update.   │
    │                                                          │
    ╰──────────────────────────────────────────────────────────╯
 "

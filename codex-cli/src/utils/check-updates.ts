@@ -41,7 +41,7 @@ export async function checkOutdated(
     // Right now we're using "--global", which only checks global packages.
     // But codex might be installed locally — we should check the local version first,
     // and only fall back to the global one if needed.
-    const args = ["outdated", "--global", "--json", "--", "open-codex"];
+    const args = ["outdated", "--global", "--json", "--", "codex-complete"];
     // corepack npm wrapper would automatically update package.json. disable that behavior.
     // COREPACK_ENABLE_AUTO_PIN disables the package.json overwrite, and
     // COREPACK_ENABLE_PROJECT_SPEC makes the npm view command succeed
@@ -114,7 +114,7 @@ export async function checkForUpdates(): Promise<void> {
   }
 
   const updateMessage = `To update, run: ${chalk.cyan(
-    "npm install -g open-codex",
+    "npm install -g codex-complete",
   )} to update.`;
 
   const box = boxen(
