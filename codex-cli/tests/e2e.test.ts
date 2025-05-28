@@ -830,20 +830,14 @@ async function simulateAgentSuggestsCommandRequiringConfirmation(command: string
 // Helper for command simulation that does NOT require confirmation (Full-Auto)
 async function simulateAgentSuggestsCommandWithoutConfirmation(command: string[]) {
     if (!mockAppProps) {
-    if (!mockAppProps) {
         throw new Error('simulateAgentSuggestsCommandWithoutConfirmation: mockAppProps is undefined. Ensure runCli() was called and App mock is set up.');
     }
     // Prioritize the direct approvalPolicy prop, then fallback to config.
     const approvalPolicy = mockAppProps.approvalPolicy || mockAppProps.config?.approvalMode;
 
     if (!mockAppProps.config) { // Still need config for other parts of handleExecCommand
-    // Prioritize the direct approvalPolicy prop, then fallback to config.
-    const approvalPolicy = mockAppProps.approvalPolicy || mockAppProps.config?.approvalMode;
-
-    if (!mockAppProps.config) { // Still need config for other parts of handleExecCommand
         throw new Error('simulateAgentSuggestsCommandWithoutConfirmation: mockAppProps.config is undefined.');
     }
-
 
     if (approvalPolicy === 'full-auto') {
         // Directly execute, no confirmation call involved from the agent's perspective.
@@ -1079,35 +1073,9 @@ describe('Codex CLI End-to-End Tests', () => {
 let mockAppProps: any;
 // Mock a function that would be called by App to get user confirmation
 let mockUserConfirmationGetter = vi.fn(async (prompt: string) => true);
-let mockUserConfirmationGetter = vi.fn(async (prompt: string) => true);
 
 vi.mock('../src/app', () => ({
   default: (props: any) => {
-    mockAppProps = { ...props }; // Capture a copy of props
-
-    // Logic to correctly mock getCommandConfirmation on mockAppProps
-    if (Object.prototype.hasOwnProperty.call(props, 'getCommandConfirmation') && typeof props.getCommandConfirmation === 'function') {
-      // If App is receiving getCommandConfirmation, set it up on mockAppProps
-      // so test helpers can use it. This mockAppProps.getCommandConfirmation
-      // will delegate to the global mockUserConfirmationGetter.
-      mockAppProps.getCommandConfirmation = async (commandInfo: any) => {
-        // Ensure mockUserConfirmationGetter is defined before calling
-        if (typeof mockUserConfirmationGetter !== 'function') {
-          throw new Error('mockUserConfirmationGetter is not a function. Ensure it is initialized globally in e2e.test.ts.');
-        }
-        return mockUserConfirmationGetter(JSON.stringify(commandInfo));
-      };
-    } else {
-      // If App is NOT receiving getCommandConfirmation (e.g. in certain modes),
-      // then mockAppProps.getCommandConfirmation should be undefined or a specific mock
-      // indicating it's not available. For tests that expect it to be undefined, this is fine.
-      // For tests that *conditionally* expect it, they should check mockAppProps.config.approvalMode etc.
-      // Let's ensure it's explicitly undefined on mockAppProps if not passed to App.
-      if (mockAppProps) { // ensure mockAppProps itself is defined
-        mockAppProps.getCommandConfirmation = undefined;
-      }
-    }
-    return null; // App mock renders nothing
     mockAppProps = { ...props }; // Capture a copy of props
 
     // Logic to correctly mock getCommandConfirmation on mockAppProps
@@ -1278,11 +1246,9 @@ describe('Core CLI Functionality', () => {
 
     await runCli(['--quiet', 'generate a random number']);
     // mockAppProps will be undefined in quiet mode as App might not render fully or at all.
-    // mockAppProps will be undefined in quiet mode as App might not render fully or at all.
     // Check that the quiet flag is passed to App component props correctly.
     // The prop name in App might be `quiet`, `isQuietMode`, or `nonInteractive`.
     // Based on meow flags, `quiet` is likely.
-    // expect(mockAppProps.quiet).toBe(true); // Cannot check this if App doesn't render
     // expect(mockAppProps.quiet).toBe(true); // Cannot check this if App doesn't render
     // It should also be reflected in the config object passed to App
     // expect(mockAppProps.config.quiet).toBe(true); // Cannot check this if App doesn't render
@@ -1551,35 +1517,6 @@ describe('AI Provider API Interactions (with local WireMock)', () => {
 
     const configUtils = await import('../src/utils/config');
     configUtils.loadConfig.mockReturnValue(getBaseMockedConfigForTests());
-
-    // Reset global MCP function mocks to a clean state for each test
-    mockMcpClientConnect.mockReset().mockResolvedValue(undefined);
-    mockMcpClientDisconnect.mockReset().mockResolvedValue(undefined);
-    mockMcpClientGetIsConnected.mockReset().mockReturnValue(true); // Default to connected
-    mockMcpClientListTools.mockReset().mockResolvedValue([]); // Default to no tools
-    mockMcpClientCallTool.mockReset().mockResolvedValue({ result: 'default mcp tool success' });
-
-    // Clear the instance and config trackers for safety.
-    Object.keys(mockMcpInstances).forEach(key => delete mockMcpInstances[key]);
-    Object.keys(mockMcpClientConfigs).forEach(key => delete mockMcpClientConfigs[key]);
-
-    // Re-establish the McpClient mock implementation
-    const McpClientModule = await import('../src/utils/mcp-client.ts');
-    const MockedMcpClient = McpClientModule.McpClient as vi.MockedFunction<typeof McpClientModule.McpClient>;
-
-    MockedMcpClient.mockImplementation((config: { name: string; url: string }) => {
-      mockMcpClientConfigs[config.name] = config; // mockMcpClientConfigs is global
-      const instance = {
-        serverName: config.name,
-        connect: mockMcpClientConnect,
-        disconnect: mockMcpClientDisconnect,
-        getIsConnected: mockMcpClientGetIsConnected,
-        listTools: mockMcpClientListTools,
-        callTool: mockMcpClientCallTool,
-      };
-      mockMcpInstances[config.name] = instance; // mockMcpInstances is global
-      return instance as any; // Cast to any or the actual client type if available
-    });
 
     // Reset global MCP function mocks to a clean state for each test
     mockMcpClientConnect.mockReset().mockResolvedValue(undefined);
