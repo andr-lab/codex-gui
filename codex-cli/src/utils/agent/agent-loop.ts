@@ -53,6 +53,7 @@ type AgentLoopParams = {
   ) => Promise<CommandConfirmation>;
   mcpServers?: McpServerConfig[]; // Added for MCP integration
   effectiveCwd?: string; // For cloned repo path
+  onError?: (error: Error) => void; // Add this line
 };
 
 export class AgentLoop {
@@ -101,6 +102,7 @@ export class AgentLoop {
   /** Master abort controller – fires when terminate() is invoked. */
   private readonly hardAbort = new AbortController();
   private readonly effectiveCwd?: string;
+  private onErrorCallback?: (error: Error) => void; // Added to store onError callback
 
   private onReset: () => void;
   private mcpClients: Map<string, McpClient> = new Map(); // Added for MCP clients
@@ -215,11 +217,13 @@ export class AgentLoop {
     onReset,
     mcpServers, // Added for MCP integration
     effectiveCwd,
-  }: AgentLoopParams & { config?: AppConfig; mcpServers?: McpServerConfig[], effectiveCwd?: string }) {
+    onError, // Add onError here
+  }: AgentLoopParams) { // AgentLoopParams should now include onError
     this.model = model;
     this.instructions = instructions;
     this.approvalPolicy = approvalPolicy;
     this.effectiveCwd = effectiveCwd;
+    this.onErrorCallback = onError; // Store it
 
     // If no `config` has been provided we derive a minimal stub so that the
     // rest of the implementation can rely on `this.config` always being a
@@ -295,6 +299,9 @@ export class AgentLoop {
         log(`[AgentLoop] MCP client for ${serverConfig.name} initialized (will connect on first use or if already connected).`);
       } catch (error: any) {
         log(`[AgentLoop] Failed to connect to MCP server ${serverConfig.name}: ${error.message}`);
+        if (this.onErrorCallback) {
+          this.onErrorCallback(new Error(`MCP Connection Error (${serverConfig.name}): ${error.message}`));
+        }
       }
     }
   }
