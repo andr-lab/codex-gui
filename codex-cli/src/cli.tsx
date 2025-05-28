@@ -17,8 +17,7 @@ import { AgentLoop } from "./utils/agent/agent-loop";
 import { initLogger } from "./utils/agent/log";
 import { ReviewDecision } from "./utils/agent/review";
 import { AutoApprovalMode } from "./utils/auto-approval-mode";
-// Updated import for Device Flow
-import { authenticateWithGitHubDeviceFlow } from "./utils/github-auth.js"; 
+import { authenticateWithGitHubDeviceFlow, getGitHubToken } from "./utils/github-auth.js";
 import { checkForUpdates } from "./utils/check-updates";
 import {
   loadConfig,
@@ -171,20 +170,41 @@ const cli = meow(
 // Handle 'auth github' command: This should be checked early.
 if (cli.input[0] === "auth" && cli.input[1] === "github") {
   (async () => {
+    let existingToken: string | null = null;
     try {
-      // authenticateWithGitHubDeviceFlow already logs instructions (user_code, verification_uri)
-      // It will resolve if token is obtained and saved, or reject on error/timeout.
-      await authenticateWithGitHubDeviceFlow(); 
-      // If it resolves, means success. A message is already logged by authenticateWithGitHubDeviceFlow.
-      console.log("\n✅ Successfully authenticated with GitHub!");
-      process.exit(0);
+      existingToken = await getGitHubToken();
     } catch (error: any) {
-      // authenticateWithGitHubDeviceFlow should ideally log specific errors.
-      // Here, we catch any error it throws to ensure graceful exit.
-      console.error(`\n❌ GitHub authentication failed: ${error.message || "Unknown error."}`);
+      // Handle errors from trying to read the token (e.g., fs errors if stored in a file)
+      console.error(`\n❌ Error checking existing GitHub token: ${error.message || "Unknown error."}`);
       console.error("Please ensure you have correctly set up your GitHub OAuth App Client ID in the config,");
       console.error("and that you complete the authorization process in your browser within the time limit.");
       process.exit(1);
+      return; // Stop further execution in IIFE
+    }
+
+    if (existingToken) {
+      console.log("\n🔑 Already authenticated with GitHub. Token found.");
+      // To re-authenticate or logout, the user would typically clear the stored token.
+      // console.log("To re-authenticate, clear the stored token first (e.g., via config or a logout command).");
+      process.exit(0); // Exit successfully, test mock will throw here.
+      return; // Stop further execution in IIFE
+    }
+
+    // No token, proceed with device flow
+    try {
+      console.log("\n⏳ No existing GitHub token found. Starting device authentication flow...");
+      // authenticateWithGitHubDeviceFlow logs instructions (user_code, verification_uri)
+      // It will resolve if token is obtained and saved, or reject on error/timeout.
+      await authenticateWithGitHubDeviceFlow();
+      // If it resolves, authentication was successful.
+      console.log("\n✅ Successfully authenticated with GitHub!");
+      process.exit(0); // Exit successfully, test mock will throw here.
+    } catch (authError: any) {
+      // This catch is specifically for errors from authenticateWithGitHubDeviceFlow
+      console.error(`\n❌ GitHub authentication failed: ${authError.message || "Unknown error."}`);
+      console.error("Please ensure you have correctly set up your GitHub OAuth App Client ID in the config,");
+      console.error("and that you complete the authorization process in your browser within the time limit.");
+      process.exit(1); // Exit with failure, test mock will throw here.
     }
   })();
 } else if (cli.input[0] === "completion") {
