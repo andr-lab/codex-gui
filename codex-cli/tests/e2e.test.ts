@@ -455,7 +455,11 @@ vi.spyOn(process, 'platform', 'get').mockImplementation(() => currentMockPlatfor
 // --- End OS Platform Mocking ---
 
 // Helper function to run the CLI
-async function runCli(args: string[], promptInput?: string | Record<string, unknown>) {
+async function runCli(
+  args: string[],
+  promptInput?: string | Record<string, unknown>,
+  baseConfigOverride?: Partial<AppConfig> // Added optional parameter
+) {
   let exitSignalForThisRun = new Promise<number | undefined>(resolve => {
     resolveExitSignalForTest = resolve;
   });
@@ -602,26 +606,36 @@ async function runCli(args: string[], promptInput?: string | Record<string, unkn
     // const meowParsedFlags = meowCli.mock.results[meowCli.mock.results.length - 1]?.value?.flags || {}; // Use finalMeowFlags directly
 
     const baseConfig = getBaseMockedConfigForTests();
-    const effectiveConfig = { ...baseConfig }; // Start with a copy of baseConfig
+    // Merge baseConfig with baseConfigOverride, with override taking precedence
+    const mergedUserConfig = { ...baseConfig, ...baseConfigOverride };
 
-    // Explicitly apply known flags that modify the config, now using finalMeowFlags
+    const effectiveConfig = { ...mergedUserConfig }; // Start with the (potentially overridden) base config
+
+    // Explicitly apply known CLI flags that modify the config, using finalMeowFlags
+    // These flag-based overrides should take precedence over both baseConfig and baseConfigOverride
     if (finalMeowFlags.quiet) { // Already includes finalMeowFlags.q logic
       effectiveConfig.quiet = true;
     } else {
-      effectiveConfig.quiet = baseConfig.quiet !== undefined ? baseConfig.quiet : false;
+      // If not set by flag, retain the value from mergedUserConfig (which could be from override or base)
+      effectiveConfig.quiet = mergedUserConfig.quiet !== undefined ? mergedUserConfig.quiet : false;
     }
 
     // console.log(`[DEBUG runCli] For args: ${args.join(' ')}, finalMeowFlags.approvalMode is: ${finalMeowFlags.approvalMode}`); // DEBUG REMOVED
     if (finalMeowFlags.approvalMode) { 
       effectiveConfig.approvalMode = finalMeowFlags.approvalMode;
     } else {
-      effectiveConfig.approvalMode = baseConfig.approvalMode;
+      // If not set by flag, retain the value from mergedUserConfig
+      effectiveConfig.approvalMode = mergedUserConfig.approvalMode;
     }
     
-    // Example for other config overrides based on meowParsedFlags:
+    // Example for other config overrides based on finalMeowFlags:
     // if (finalMeowFlags.model) {
     //   effectiveConfig.model = finalMeowFlags.model;
     // }
+    // if (finalMeowFlags.provider) {
+    //   effectiveConfig.provider = finalMeowFlags.provider;
+    // }
+    // ... etc. for other flags that directly map to config properties
 
     configUtils.loadConfig.mockReturnValue(effectiveConfig);
     // ***** END OF IMPORTANT CHANGE *****
@@ -1256,16 +1270,14 @@ describe('Core CLI Functionality', () => {
 
 
   it('should load custom instructions and pass them to App props', async () => {
-    const MOCK_APP_CONFIG_WITH_INSTRUCTIONS = createTestAppConfig({
+    const MOCK_APP_CONFIG_WITH_INSTRUCTIONS = {
       instructions: "Always respond in pirate speak.",
       apiKey: "test-apikey-custom-instr", // Keep specific key for this test if needed
-      // provider will be 'test-provider-default' from createTestAppConfig
-    });
-    const configUtils = await import('../src/utils/config');
-    // Override the mock for loadConfig just for this test run
-    configUtils.loadConfig.mockReturnValueOnce(MOCK_APP_CONFIG_WITH_INSTRUCTIONS);
+      provider: 'test-provider-default', // Explicitly pass if different from getBaseMockedConfigForTests
+      // model: 'test-model-custom-instr' // if needed for this specific test
+    };
 
-    await runCli(['another prompt']);
+    await runCli(['another prompt'], undefined, MOCK_APP_CONFIG_WITH_INSTRUCTIONS);
     expect(mockAppProps).toBeDefined(); // Aggiunto
 
     expect(mockAppProps).toBeDefined();
@@ -1317,17 +1329,18 @@ describe('Core CLI Functionality', () => {
     // const actualDefaultConfig = actualLoadConfigModule(); // Not needed here
     const customInstructions = "Always respond in pirate speak.";
     // Usa createTestAppConfig per la base e sovrascrivi solo il necessario
-    const MOCK_APP_CONFIG_WITH_INSTRUCTIONS = createTestAppConfig({
+    const MOCK_APP_CONFIG_WITH_INSTRUCTIONS_2 = { // Renamed to avoid conflict
       instructions: customInstructions,
-      // Sovrascrivi apiKey per questo test specifico, se necessario, altrimenti userà il default di createTestAppConfig
-      apiKey: "test-apikey-custom-instr-set-explicitly", 
-      // Il provider sarà 'test-provider-default' da createTestAppConfig, gestito dal Fix 1
-    });
+      apiKey: "test-apikey-custom-instr-set-explicitly",
+      provider: 'test-provider-default', // Explicitly pass if different from getBaseMockedConfigForTests
+      // model: 'test-model-custom-instr-explicitly' // if needed
+    };
     
-    const configUtils = await import('../src/utils/config');
-    // Override the mock for loadConfig specifically for this test run
-    configUtils.loadConfig.mockReturnValueOnce(MOCK_APP_CONFIG_WITH_INSTRUCTIONS);
-    await runCli(['another prompt for custom instructions']);
+    await runCli(
+      ['another prompt for custom instructions'],
+      undefined,
+      MOCK_APP_CONFIG_WITH_INSTRUCTIONS_2
+    );
     expect(mockAppProps).toBeDefined(); // Aggiunto
 
     expect(mockAppProps).toBeDefined();
@@ -1626,15 +1639,16 @@ describe('AI Provider API Interactions (with local WireMock)', () => {
   describe('MCP Errors', () => {
     it('should handle MCP connection errors', async () => {
       // No AI interaction expected for this specific MCP error test, so no AI stubs needed beyond models.
-      const configUtils = await import('../src/utils/config');
-      configUtils.loadConfig.mockReturnValueOnce({
-        ...getBaseMockedConfigForTests(),
-        mcpServers: [{ name: 'FailingMCP', url: 'http://mcp.fail.test', enabled: true }],
-      });
-
       mockMcpClientConnect.mockRejectedValueOnce(new Error('Connection refused for FailingMCP'));
 
-      const { stderr, exitCode } = await runCli(['prompt that uses MCP']);
+      const { stderr, exitCode } = await runCli(
+        ['prompt that uses MCP'],
+        undefined,
+        {
+          mcpServers: [{ name: 'FailingMCP', url: 'http://mcp.fail.test', enabled: true }],
+          // Inherit apiKey, baseURL etc. from getBaseMockedConfigForTests via runCli merge logic
+        }
+      );
       // mockAppProps potrebbe non essere definito se il CLI esce prima.
       
       // This assertion depends on how the App/CLI surfaces MCP connection errors.
@@ -1660,18 +1674,19 @@ describe('AI Provider API Interactions (with local WireMock)', () => {
           priority: 5 // Higher than default chat, lower than specific error stubs
         });
 
-        const configUtils = await import('../src/utils/config');
-        configUtils.loadConfig.mockReturnValueOnce({
-            ...getBaseMockedConfigForTests(),
-            mcpServers: [{ name: 'ErrorToolMCP', url: 'http://mcp.toolfail.test', enabled: true }],
-            approvalMode: 'full-auto', // For simplicity, auto-approve the failing tool call
-        });
-
         mockMcpClientListTools.mockResolvedValueOnce([{ name: 'failing_tool', description: 'A tool that fails', parameters: {} }]);
         mockMcpClientCallTool.mockRejectedValueOnce(new Error('Simulated MCP Tool Execution Error'));
 
         // The runCli call will set up the App. The error occurs when the tool is called via simulate.
-        await runCli(['use failing_tool from ErrorToolMCP']); 
+        await runCli(
+          ['use failing_tool from ErrorToolMCP'],
+          undefined,
+          {
+            mcpServers: [{ name: 'ErrorToolMCP', url: 'http://mcp.toolfail.test', enabled: true }],
+            approvalMode: 'full-auto', // For simplicity, auto-approve the failing tool call
+            // AI call details (apiKey, baseURL) are inherited from getBaseMockedConfigForTests
+          }
+        );
         expect(mockAppProps).toBeDefined(); // Aggiunto
 
         // Simulate the agent trying to call the tool
@@ -1794,19 +1809,24 @@ describe('AI Provider API Interactions (with local WireMock)', () => {
           priority: 1 
         });
 
-        // Ensure CLI is in full-auto mode
-        const config = createTestAppConfig({ approvalMode: 'full-auto', baseURL: MOCK_GPT_SERVER_URL, apiKey: FAKE_API_KEY_FOR_MOCK_SERVER });
-        vi.mocked((await import('../src/utils/config'))).loadConfig.mockReturnValue(config);
+        // Ensure CLI is in full-auto mode.
+        // The --approval-mode flag in runCli args will set 'full-auto'.
+        // We need to pass other specific configs like baseURL and apiKey via override.
+        const runCliConfigOverride = {
+          baseURL: MOCK_GPT_SERVER_URL,
+          apiKey: FAKE_API_KEY_FOR_MOCK_SERVER,
+          // provider will default to 'openai' from getBaseMockedConfigForTests if not specified here,
+          // which is fine as MOCK_GPT_SERVER_URL implies an OpenAI-like mock.
+        };
         
-        // Run CLI to set up mockAppProps. The prompt should trigger the AI an
-        await runCli(['--approval-mode', 'full-auto', 'prompt for agent to patch /root/locked.txt']); 
+        // Run CLI to set up mockAppProps. The prompt should trigger the AI.
+        await runCli(
+          ['--approval-mode', 'full-auto', 'prompt for agent to patch /root/locked.txt'],
+          undefined,
+          runCliConfigOverride
+        );
         expect(mockAppProps).toBeDefined();
-        // Safeguard mockAppProps.config.approvalMode for the simulateAgentSuggestsFilePatch helper
-        if (mockAppProps?.config) {
-            mockAppProps.config.approvalMode = 'full-auto';
-        } else {
-            mockAppProps = { config: { approvalMode: 'full-auto'} }; // Should not happen
-        }
+        // mockAppProps.config.approvalMode will be 'full-auto' due to the flag.
             
         const permissionError = new Error('EACCES: permission denied, open \'/root/locked.txt\'');
         (permissionError as any).code = 'EACCES';
@@ -2084,10 +2104,14 @@ describe('File System Interactions', () => {
 
     memFsStore[existingFilePath] = oldContent; // Pre-populate the file
 
-    const configUtils = await import('../src/utils/config');
-    configUtils.loadConfig.mockReturnValueOnce(createTestAppConfig({ approvalMode: 'full-auto' }));
-
-    await runCli(['--approval-mode', 'full-auto', `update ${existingFilePath} to ${newContent}`]);
+    // --approval-mode flag will handle setting 'full-auto'.
+    // We pass other config values if they are intentionally different from getBaseMockedConfigForTests.
+    // createTestAppConfig by default uses 'test-provider-default' and 'test-apikey-default'.
+    await runCli(
+      ['--approval-mode', 'full-auto', `update ${existingFilePath} to ${newContent}`],
+      undefined,
+      { provider: 'test-provider-default', apiKey: 'test-apikey-default' }
+    );
     expect(mockAppProps).toBeDefined();
 
     await simulateAgentSuggestsFilePatch(newContent, existingFilePath);
@@ -2101,10 +2125,13 @@ describe('File System Interactions', () => {
     const filePathToDelete = 'obsolete.tmp';
     memFsStore[filePathToDelete] = 'delete me'; // File exists
 
-    const configUtils = await import('../src/utils/config');
-    configUtils.loadConfig.mockReturnValueOnce(createTestAppConfig({ approvalMode: 'full-auto' }));
-
-    await runCli(['--approval-mode', 'full-auto', `delete ${filePathToDelete}`]);
+    // --approval-mode flag will handle setting 'full-auto'.
+    // Pass other specific config values if different from getBaseMockedConfigForTests.
+    await runCli(
+      ['--approval-mode', 'full-auto', `delete ${filePathToDelete}`],
+      undefined,
+      { provider: 'test-provider-default', apiKey: 'test-apikey-default' }
+    );
     expect(mockAppProps).toBeDefined();
 
     await simulateAgentSuggestsFilePatch('<DELETE>', filePathToDelete);
@@ -2129,10 +2156,16 @@ describe('File System Interactions', () => {
     mockUserConfirmationGetter.mockReset().mockResolvedValue(false); // Utente RIFIUTA
 
     // Configurazione per approvalMode: 'suggest' (o default)
-    const configUtils = await import('../src/utils/config');
-    configUtils.loadConfig.mockReturnValueOnce(createTestAppConfig({ approvalMode: 'suggest' }));
-
-    await runCli([`update ${filePath}`]); 
+    // Also ensure provider/apiKey from createTestAppConfig are used if intended.
+    await runCli(
+      [`update ${filePath}`],
+      undefined,
+      {
+        approvalMode: 'suggest',
+        provider: 'test-provider-default',
+        apiKey: 'test-apikey-default',
+      }
+    );
     expect(mockAppProps).toBeDefined(); // Aggiunto
     expect(mockAppProps.getCommandConfirmation).toBeInstanceOf(Function); // Verifica che la funzione sia stata passata
     
@@ -2192,12 +2225,11 @@ describe('MCP Integration', () => {
   ];
 
   it('should initialize McpClient for each configured server and call connect', async () => {
-    const configUtils = await import('../src/utils/config');
-    configUtils.loadConfig.mockReturnValueOnce(createTestAppConfig({
-      mcpServers: [MCP_SERVER_CONFIG_1],
-    }));
-
-    await runCli(['initial prompt for MCP']);
+    await runCli(
+      ['initial prompt for MCP'],
+      undefined,
+      { mcpServers: [MCP_SERVER_CONFIG_1] }
+    );
     expect(mockAppProps).toBeDefined(); // Aggiunto
 
     expect(await import('../src/utils/mcp-client').McpClient).toHaveBeenCalledWith(
@@ -2219,14 +2251,14 @@ describe('MCP Integration', () => {
   });
 
   it('should discover tools from an MCP server', async () => {
-    const configUtils = await import('../src/utils/config');
-    configUtils.loadConfig.mockReturnValueOnce(createTestAppConfig({
-      mcpServers: [MCP_SERVER_CONFIG_1],
-    }));
     // Configure the mock for listTools for the specific instance/server name
     mockMcpClientListTools.mockResolvedValue(MOCK_CALCULATOR_TOOLS);
 
-    await runCli(['prompt that might lead to tool discovery']);
+    await runCli(
+      ['prompt that might lead to tool discovery'],
+      undefined,
+      { mcpServers: [MCP_SERVER_CONFIG_1] }
+    );
     expect(mockAppProps).toBeDefined(); // Aggiunto
 
     // Assert that listTools was called on the instance associated with MyCalculator
@@ -2237,18 +2269,19 @@ describe('MCP Integration', () => {
   });
 
   it('should successfully call an MCP tool when approved', async () => {
-    const configUtils = await import('../src/utils/config');
-    configUtils.loadConfig.mockReturnValueOnce(createTestAppConfig({
-      mcpServers: [MCP_SERVER_CONFIG_1],
-      approvalMode: 'suggest', // Ensure confirmation is sought
-    }));
-
     mockMcpClientListTools.mockResolvedValue(MOCK_CALCULATOR_TOOLS); // Agent needs to know the tool
     mockUserConfirmationGetter.mockResolvedValue(true); // User approves
     const expectedResult = { sum: 8 };
     mockMcpClientCallTool.mockResolvedValue({ result: expectedResult });
 
-    await runCli(['add 5 and 3 using calculator']); // Sets up mockAppProps
+    await runCli(
+      ['add 5 and 3 using calculator'],
+      undefined,
+      {
+        mcpServers: [MCP_SERVER_CONFIG_1],
+        approvalMode: 'suggest', // Ensure confirmation is sought
+      }
+    );
     expect(mockAppProps).toBeDefined(); // Aggiunto
 
     const toolCallArgs = { num1: 5, num2: 3 };
@@ -2262,18 +2295,19 @@ describe('MCP Integration', () => {
   });
   
   it('should handle MCP tool call failure', async () => {
-    const configUtils = await import('../src/utils/config');
-    configUtils.loadConfig.mockReturnValueOnce(createTestAppConfig({
-      mcpServers: [MCP_SERVER_CONFIG_1],
-      approvalMode: 'suggest',
-    }));
-
     mockMcpClientListTools.mockResolvedValue(MOCK_CALCULATOR_TOOLS);
     mockUserConfirmationGetter.mockResolvedValue(true); // User approves
     const error = new Error('MCP Tool Execution Failed');
     mockMcpClientCallTool.mockRejectedValue(error);
 
-    await runCli(['use calculator to add 1 and 1']); // Sets up mockAppProps
+    await runCli(
+      ['use calculator to add 1 and 1'],
+      undefined,
+      {
+        mcpServers: [MCP_SERVER_CONFIG_1],
+        approvalMode: 'suggest',
+      }
+    );
     expect(mockAppProps).toBeDefined(); // Aggiunto
 
     const toolCallArgs = { num1: 1, num2: 1 };
@@ -2288,12 +2322,6 @@ describe('MCP Integration', () => {
   });
 
   it('should handle multiple MCP servers correctly', async () => {
-    const configUtils = await import('../src/utils/config');
-    configUtils.loadConfig.mockReturnValueOnce(createTestAppConfig({
-      mcpServers: [MCP_SERVER_CONFIG_1, MCP_SERVER_CONFIG_2],
-      approvalMode: 'full-auto', // Simplify confirmation for this test
-    }));
-
     // Configure listTools for each server
     const calcInstanceMocks = { listTools: vi.fn().mockResolvedValue(MOCK_CALCULATOR_TOOLS), callTool: vi.fn() };
     const weatherInstanceMocks = { listTools: vi.fn().mockResolvedValue(MOCK_WEATHER_TOOLS), callTool: vi.fn() };
@@ -2314,8 +2342,14 @@ describe('MCP Integration', () => {
       return instanceMock;
     });
 
-
-    await runCli(['use calculator and weather']);
+    await runCli(
+      ['use calculator and weather'],
+      undefined,
+      {
+        mcpServers: [MCP_SERVER_CONFIG_1, MCP_SERVER_CONFIG_2],
+        approvalMode: 'full-auto', // Simplify confirmation for this test
+      }
+    );
     expect(mockAppProps).toBeDefined(); // Aggiunto
 
     // Check instantiation
