@@ -1,14 +1,14 @@
 <h1 align="center">Open Codex CLI</h1>
 <p align="center">Lightweight coding agent that runs in your terminal</p>
 
-<p align="center"><code>npm i -g open-codex</code></p>
+<p align="center"><code>npm i -g codex-complete</code></p>
 
 > **Important Note**: This is a fork of the [original OpenAI Codex CLI](https://github.com/openai/codex) with expanded model support and changed installation instructions. The main differences in this fork are:
 >
 > - Support for multiple AI providers (OpenAI, Gemini, OpenRouter, Ollama)
 > - Uses the [Chat Completion API instead of the Responses API](https://platform.openai.com/docs/guides/responses-vs-chat-completions) which allows us to support any openai compatible provider and model.
 > - All other functionality remains similar to the original project
-> - You can install this fork globally with `npm i -g open-codex`
+> - You can install this fork globally with `npm i -g codex-complete`
 
 ---
 
@@ -60,7 +60,7 @@ Help us improve by filing issues or submitting PRs (see the section below for ho
 Install globally:
 
 ```shell
-npm install -g open-codex
+npm install -g codex-complete
 ```
 
 Next, set your API key as an environment variable (shown here with OpenAI, but other providers are supported):
@@ -82,17 +82,17 @@ export OPENAI_API_KEY="your-api-key-here"
 Run interactively:
 
 ```shell
-open-codex
+codex-complete
 ```
 
 Or, run with a prompt as input (and optionally in `Full Auto` mode):
 
 ```shell
-open-codex "explain this codebase to me"
+codex-complete "explain this codebase to me"
 ```
 
 ```shell
-open-codex --approval-mode full-auto "create the fanciest todo-list app"
+codex-complete --approval-mode full-auto "create the fanciest todo-list app"
 ```
 
 That's it – Codex will scaffold a file, run it inside a sandbox, install any
@@ -174,10 +174,10 @@ The hardening mechanism Codex uses depends on your OS:
 
 | Command                                   | Purpose                             | Example                              |
 | ----------------------------------------- | ----------------------------------- | ------------------------------------ |
-| `open-codex`                              | Interactive REPL                    | `codex`                              |
-| `open-codex "…"`                          | Initial prompt for interactive REPL | `codex "fix lint errors"`            |
-| `open-codex -q "…"`                       | Non‑interactive "quiet mode"        | `codex -q --json "explain utils.ts"` |
-| `open-codex completion <bash\|zsh\|fish>` | Print shell completion script       | `codex completion bash`              |
+| `codex-complete`                              | Interactive REPL                    | `codex`                              |
+| `codex-complete "…"`                          | Initial prompt for interactive REPL | `codex "fix lint errors"`            |
+| `codex-complete -q "…"`                       | Non‑interactive "quiet mode"        | `codex -q --json "explain utils.ts"` |
+| `codex-complete completion <bash\|zsh\|fish>` | Print shell completion script       | `codex completion bash`              |
 
 Key flags: `--model/-m`, `--approval-mode/-a`, and `--quiet/-q`.
 
@@ -202,9 +202,9 @@ Run Codex head‑less in pipelines. Example GitHub Action step:
 ```yaml
 - name: Update changelog via Codex
   run: |
-    npm install -g open-codex
+    npm install -g codex-complete
     export OPENAI_API_KEY="${{ secrets.OPENAI_KEY }}"
-    open-codex -a auto-edit --quiet "update CHANGELOG for next release"
+    codex-complete -a auto-edit --quiet "update CHANGELOG for next release"
 ```
 
 Set `CODEX_QUIET_MODE=1` to silence interactive UI noise.
@@ -214,7 +214,7 @@ Set `CODEX_QUIET_MODE=1` to silence interactive UI noise.
 Setting the environment variable `DEBUG=true` prints full API request and response details:
 
 ```shell
-DEBUG=true open-codex
+DEBUG=true codex-complete
 ```
 
 ---
@@ -241,9 +241,9 @@ Below are a few bite‑size examples you can copy‑paste. Replace the text in q
 <summary><strong>From npm (Recommended)</strong></summary>
 
 ```bash
-npm install -g open-codex
+npm install -g codex-complete
 # or
-yarn global add open-codex
+yarn global add codex-complete
 ```
 
 </details>
@@ -253,8 +253,8 @@ yarn global add open-codex
 
 ```bash
 # Clone the repository and navigate to the CLI package
-git clone https://github.com/ymichael/open-codex.git
-cd open-codex/codex-cli
+git clone https://github.com/ymichael/codex-complete.git
+cd codex-complete/codex-cli
 
 # Install dependencies and build
 npm install
@@ -409,7 +409,7 @@ The Codex CLI agent handles the routing of these tool calls to the appropriate M
 <details>
 <summary>What's the difference between this and the original OpenAI Codex CLI?</summary>
 
-This is a fork of the original OpenAI Codex CLI project with expanded support for multiple AI providers beyond just OpenAI. The installation package is also different (`open-codex` instead of `@openai/codex`), but the core functionality remains similar.
+This is a fork of the original OpenAI Codex CLI project with expanded support for multiple AI providers beyond just OpenAI. The installation package is also different (`codex-complete` instead of `@openai/codex`), but the core functionality remains similar.
 
 </details>
 
