@@ -455,10 +455,16 @@ vi.spyOn(process, 'platform', 'get').mockImplementation(() => currentMockPlatfor
 // --- End OS Platform Mocking ---
 
 // Helper function to run the CLI
+interface MeowMockOptions {
+  input: string[];
+  flags: Record<string, any>;
+}
+
 async function runCli(
-  args: string[],
+  rawArgsForLogging: string[], // Keep original args for logging if needed
+  meowMockOverrides: MeowMockOptions,
   promptInput?: string | Record<string, unknown>,
-  baseConfigOverride?: Partial<AppConfig> // Added optional parameter
+  baseConfigOverride?: Partial<AppConfig>
 ) {
   let exitSignalForThisRun = new Promise<number | undefined>(resolve => {
     resolveExitSignalForTest = resolve;
@@ -499,42 +505,11 @@ async function runCli(
     capturedStderr += message + "\n";
   });
 
-  // Improved parsing of args into flags and input for meow
-  const flags: Record<string, any> = {};
-  const input: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    const nextArg = args[i+1];
-
-    if (arg.startsWith('--')) {
-      const longArg = arg.substring(2);
-      if (longArg.includes('=')) {
-        const [key, value] = longArg.split('=');
-        flags[key] = value;
-      } else if (longArg === 'approval-mode' || longArg === 'model' || longArg === 'provider' || longArg === 'project-doc' || longArg === 'github-repo' || longArg === 'github-branch') { // Add other flags that take a value
-        if (nextArg && !nextArg.startsWith('--')) {
-          flags[longArg] = nextArg;
-          i++; // Consume value
-        } else {
-          flags[longArg] = true; // Or handle error: value missing
-        }
-      } else { // Boolean flag
-        flags[longArg] = true;
-      }
-    } else if (arg.startsWith('-')) {
-      // Handle known short aliases
-      if (arg === '-q') flags.quiet = true;
-      // Add other aliases like -m for approvalMode if necessary,
-      // though meow itself handles alias resolution if primary flag (e.g. approvalMode) is in meowMockFlags
-    } else {
-      input.push(arg);
-    }
-  }
-  // console.log(`[DEBUG runCli] Parsed flags (kebab-case): ${JSON.stringify(flags)}`); // DEBUG REMOVED
+  // Manual parsing of args is removed. meowMockOverrides is used directly.
   
-  let finalInput = [...input]; // input is now correctly populated
-  if (typeof promptInput === 'string' && !flags.quiet) { // Check only flags.quiet as -q is mapped to it
-      finalInput = [promptInput, ...input]; // Prepend promptInput to the correctly parsed input
+  let finalInput = [...meowMockOverrides.input];
+  if (typeof promptInput === 'string' && !meowMockOverrides.flags.quiet) {
+    finalInput = [promptInput, ...meowMockOverrides.input];
   }
   
   // Moved meow setup after vi.resetModules()
@@ -557,53 +532,24 @@ async function runCli(
     }
 
     // --- MEOW MOCK SETUP MOVED HERE ---
-    const meow = (await import('meow')).default as unknown as vi.MockedFunction<any>; 
-
-    const meowMockFlags: Record<string, any> = {};
-    for (const key in flags) { // 'flags' is from the initial manual parse
-        const camelCaseKey = key.replace(/-([a-z])/g, g => g[1].toUpperCase());
-        meowMockFlags[camelCaseKey] = flags[key];
-    }
-    // console.log(`[DEBUG runCli] meowMockFlags (camelCase): ${JSON.stringify(meowMockFlags)}`); // DEBUG REMOVED
-
-    const finalMeowFlags: Record<string, any> = { ...meowMockFlags };
-    finalMeowFlags.help = finalMeowFlags.help || false;
-    finalMeowFlags.version = finalMeowFlags.version || false;
-    finalMeowFlags.config = finalMeowFlags.config || false;
-    finalMeowFlags.quiet = finalMeowFlags.quiet || finalMeowFlags.q || false;
-    // No need to explicitly set finalMeowFlags.approvalMode if it's in meowMockFlags
+    const meow = (await import('meow')).default as unknown as vi.MockedFunction<any>;
 
     meow.mockReturnValue({
-        input: finalInput, // finalInput is from the initial parse
-        flags: finalMeowFlags,
-        showHelp: vi.fn((_exitCode?: number) => { 
+        input: finalInput, // Uses the potentially prepended promptInput
+        // Ensure common flags like help/version have defaults if not provided in overrides
+        flags: { ...meowMockOverrides.flags, help: meowMockOverrides.flags.help || false, version: meowMockOverrides.flags.version || false },
+        showHelp: vi.fn((_exitCode?: number) => {
             capturedStdout += "Mocked help text displayed by meow.showHelp()\n";
             capturedStdout += "Usage: codex-complete <command> [options]\n";
-            capturedStdout += "Options:\n";
-            capturedStdout += "  --help                 Show help\n";
-            capturedStdout += "  --version              Show version number\n";
-            capturedStdout += "  --config               Open config file\n";
-            capturedStdout += "  --quiet, -q            Suppress all output except for the final result\n";
-            capturedStdout += "  --approval-mode <mode> Set approval mode (suggest, auto-edit, full-auto)\n";
-            capturedStdout += "  --github-repo <repo>   GitHub repository (owner/repo)\n";
-            capturedStdout += "  --github-branch <branch> GitHub branch\n";
-            capturedStdout += "  --model <model_name>   Specify the model to use\n";
+            // Add more common flags if necessary, or keep it minimal
+            capturedStdout += "Options:\n  --help Show help\n  --version Show version number\n";
         }),
         showVersion: vi.fn(() => {
-            // Ensure it matches the pkg version provided from the meow instance this mockReturnValue creates
-            // This requires meow to be defined in a scope accessible here, or pass pkg info directly.
-            // For simplicity, using the constant pkg info directly.
-            capturedStdout += "codex-complete/0.0.0-test\n"; 
+            capturedStdout += "codex-complete/0.0.0-test\n";
         }),
         pkg: { name: 'codex-complete', version: '0.0.0-test' },
     });
     // --- END OF MEOW MOCK SETUP ---
-
-
-    // This uses the globally defined getBaseMockedConfigForTests()
-    // and then explicitly overrides with flags parsed by the meow mock for this specific invocation.
-    // const meowCli = (await import('meow')).default as unknown as vi.MockedFunction<any>; // No longer needed to get meowParsedFlags
-    // const meowParsedFlags = meowCli.mock.results[meowCli.mock.results.length - 1]?.value?.flags || {}; // Use finalMeowFlags directly
 
     const baseConfig = getBaseMockedConfigForTests();
     // Merge baseConfig with baseConfigOverride, with override taking precedence
@@ -611,29 +557,28 @@ async function runCli(
 
     const effectiveConfig = { ...mergedUserConfig }; // Start with the (potentially overridden) base config
 
-    // Explicitly apply known CLI flags that modify the config, using finalMeowFlags
+    // Explicitly apply known CLI flags that modify the config, using meowMockOverrides.flags
     // These flag-based overrides should take precedence over both baseConfig and baseConfigOverride
-    if (finalMeowFlags.quiet) { // Already includes finalMeowFlags.q logic
+    if (meowMockOverrides.flags.quiet) {
       effectiveConfig.quiet = true;
     } else {
       // If not set by flag, retain the value from mergedUserConfig (which could be from override or base)
       effectiveConfig.quiet = mergedUserConfig.quiet !== undefined ? mergedUserConfig.quiet : false;
     }
 
-    // console.log(`[DEBUG runCli] For args: ${args.join(' ')}, finalMeowFlags.approvalMode is: ${finalMeowFlags.approvalMode}`); // DEBUG REMOVED
-    if (finalMeowFlags.approvalMode) { 
-      effectiveConfig.approvalMode = finalMeowFlags.approvalMode;
+    if (meowMockOverrides.flags.approvalMode) {
+      effectiveConfig.approvalMode = meowMockOverrides.flags.approvalMode;
     } else {
       // If not set by flag, retain the value from mergedUserConfig
       effectiveConfig.approvalMode = mergedUserConfig.approvalMode;
     }
     
-    // Example for other config overrides based on finalMeowFlags:
-    // if (finalMeowFlags.model) {
-    //   effectiveConfig.model = finalMeowFlags.model;
+    // Example for other config overrides based on meowMockOverrides.flags:
+    // if (meowMockOverrides.flags.model) {
+    //   effectiveConfig.model = meowMockOverrides.flags.model;
     // }
-    // if (finalMeowFlags.provider) {
-    //   effectiveConfig.provider = finalMeowFlags.provider;
+    // if (meowMockOverrides.flags.provider) {
+    //   effectiveConfig.provider = meowMockOverrides.flags.provider;
     // }
     // ... etc. for other flags that directly map to config properties
 
@@ -1082,7 +1027,7 @@ describe('Codex CLI End-to-End Tests', () => {
     const configUtils = await import('../src/utils/config');
     configUtils.loadConfig.mockReturnValue(getBaseMockedConfigForTests());
 
-    const { exitCode, stdout, stderr } = await runCli([]); // Simplest CLI invocation
+    const { exitCode, stdout, stderr } = await runCli([], { input: [], flags: {} }); // Simplest CLI invocation
     expect(stderr).not.toContain('OpenAI rejected the request'); // Or any other AI error message
     expect(stderr).not.toContain('Failed to fetch'); // General network error
     expect(exitCode).toBeDefined();
@@ -1112,7 +1057,7 @@ describe('Codex CLI End-to-End Tests', () => {
     // Example of how a CLI command might use it.
     // This test doesn't need to run the CLI if we're just unit-testing the platform mock itself.
     // If testing CLI behavior based on platform:
-    // const { stdout } = await runCli(['some-command-that-checks-platform']);
+    // const { stdout } = await runCli(['some-command-that-checks-platform'], { input: ['some-command-that-checks-platform'], flags: {} });
     // expect(stdout).toContain('Detected platform: linux');
   });
 
@@ -1121,7 +1066,7 @@ describe('Codex CLI End-to-End Tests', () => {
     expect(process.platform).toBe('win32');
     
     // If testing CLI behavior based on platform:
-    // const { stdout } = await runCli(['some-command-that-checks-platform']);
+    // const { stdout } = await runCli(['some-command-that-checks-platform'], { input: ['some-command-that-checks-platform'], flags: {} });
     // expect(stdout).toContain('Detected platform: win32');
   });
 
@@ -1199,7 +1144,7 @@ describe('Core CLI Functionality', () => {
   });
   it('should pass prompt to App in default (suggest) mode', async () => {
     // runCli chiamerà setupAppMock internamente
-    await runCli(['explain this code']);
+    await runCli(['explain this code'], { input: ['explain this code'], flags: {} });
     expect(mockAppProps).toBeDefined(); // This should now have a better chance
     if (mockAppProps) { // Guard access
         expect(mockAppProps.prompt).toBe('explain this code');
@@ -1212,7 +1157,7 @@ describe('Core CLI Functionality', () => {
     it('should execute command if user approves in suggest mode', async () => {
       mockUserConfirmationGetter = vi.fn(async () => true); // User approves
       
-      await runCli(['run test script']); // This sets mockAppProps via the App mock
+      await runCli(['run test script'], { input: ['run test script'], flags: {} }); // This sets mockAppProps via the App mock
 
       expect(mockAppProps).toBeDefined();
       expect(mockAppProps.getCommandConfirmation).toBeInstanceOf(Function);
@@ -1231,7 +1176,7 @@ describe('Core CLI Functionality', () => {
     it('should NOT execute command if user rejects in suggest mode', async () => {
       mockUserConfirmationGetter = vi.fn(async () => false); // User rejects
       
-      await runCli(['run test script']); // Sets mockAppProps
+      await runCli(['run test script'], { input: ['run test script'], flags: {} }); // Sets mockAppProps
 
       expect(mockAppProps).toBeDefined();
       expect(mockAppProps.getCommandConfirmation).toBeInstanceOf(Function);
@@ -1258,7 +1203,7 @@ describe('Core CLI Functionality', () => {
     const configUtils = await import('../src/utils/config');
     const mockedConfig = configUtils.loadConfig(); // This will be the mocked config
     
-    await runCli(['some prompt']);
+    await runCli(['some prompt'], { input: ['some prompt'], flags: {} });
     expect(mockAppProps).toBeDefined(); // Aggiunto per assicurarsi che App sia stata mockata/chiamata
     
     expect(mockAppProps).toBeDefined();
@@ -1277,7 +1222,7 @@ describe('Core CLI Functionality', () => {
       // model: 'test-model-custom-instr' // if needed for this specific test
     };
 
-    await runCli(['another prompt'], undefined, MOCK_APP_CONFIG_WITH_INSTRUCTIONS);
+    await runCli(['another prompt'], { input: ['another prompt'], flags: {} }, undefined, MOCK_APP_CONFIG_WITH_INSTRUCTIONS);
     expect(mockAppProps).toBeDefined(); // Aggiunto
 
     expect(mockAppProps).toBeDefined();
@@ -1293,7 +1238,7 @@ describe('Core CLI Functionality', () => {
     // The actual getCommandConfirmation passed to App by cli.tsx should handle quiet mode.
     // Our mockUserConfirmationGetter should not be called.
 
-    await runCli(['--quiet', 'generate a random number']);
+    await runCli(['--quiet', 'generate a random number'], { input: ['generate a random number'], flags: { quiet: true } });
     // mockAppProps will be undefined in quiet mode as App might not render fully or at all.
     // Check that the quiet flag is passed to App component props correctly.
     // The prop name in App might be `quiet`, `isQuietMode`, or `nonInteractive`.
@@ -1307,7 +1252,7 @@ describe('Core CLI Functionality', () => {
     // This test verifies that this internal handling prevents interactive prompts and execution.
     // The "Network error" in stdout indicates agent.run() tried an API call and returned.
     // If it hadn't returned, runCli() would hang.
-    const { stdout } = await runCli(['--quiet', 'generate a random number']);
+    const { stdout } = await runCli(['--quiet', 'generate a random number'], { input: ['generate a random number'], flags: { quiet: true } });
     
     // Check if the agent's attempt to call OpenAI (via WireMock) resulted in the known "Network error".
     // This helps confirm the test is running under the same conditions as observed in logs.
@@ -1338,6 +1283,7 @@ describe('Core CLI Functionality', () => {
     
     await runCli(
       ['another prompt for custom instructions'],
+      { input: ['another prompt for custom instructions'], flags: {} },
       undefined,
       MOCK_APP_CONFIG_WITH_INSTRUCTIONS_2
     );
@@ -1356,7 +1302,7 @@ describe('Core CLI Functionality', () => {
     // The global config mock defaults to approvalMode: 'suggest' (from getBaseMockedConfigForTests)
     // The --quiet flag should ensure that even if the AI suggests a command,
     // the internal non-interactive NO_CONTINUE prevents any interactive confirmation or execution.
-    const { stdout } = await runCli(['--quiet', 'generate a random number in quiet mode']); 
+    const { stdout } = await runCli(['--quiet', 'generate a random number in quiet mode'], { input: ['generate a random number in quiet mode'], flags: { quiet: true } });
     
     // As with the previous test, check for the network error to confirm context.
     expect(stdout).not.toContain("No response could be served as there are no stub mappings in this WireMock instance");
@@ -1396,7 +1342,7 @@ describe('Sandboxing Logic', () => {
 
   it('should use sandbox-exec on macOS in full-auto mode', async () => {
     setMockPlatform('darwin');
-    await runCli(['--approval-mode', 'full-auto', 'do something on mac']);
+    await runCli(['--approval-mode', 'full-auto', 'do something on mac'], { input: ['do something on mac'], flags: { approvalMode: 'full-auto' } });
     expect(mockAppProps).toBeDefined(); // Aggiunto
     
     const originalCommand = ['ls', '-la'];
@@ -1414,7 +1360,7 @@ describe('Sandboxing Logic', () => {
 
   it('should use Docker script on Linux in full-auto mode', async () => {
     setMockPlatform('linux');
-    await runCli(['--approval-mode', 'full-auto', 'do something on linux']);
+    await runCli(['--approval-mode', 'full-auto', 'do something on linux'], { input: ['do something on linux'], flags: { approvalMode: 'full-auto' } });
     expect(mockAppProps).toBeDefined(); // Aggiunto
 
     const originalCommand = ['npm', 'test'];
@@ -1431,7 +1377,7 @@ describe('Sandboxing Logic', () => {
 
   it('should NOT use sandboxing in suggest mode', async () => {
     setMockPlatform('linux'); // Platform doesn't strictly matter here, but set for consistency
-    await runCli(['--approval-mode', 'suggest', 'do something normally']);
+    await runCli(['--approval-mode', 'suggest', 'do something normally'], { input: ['do something normally'], flags: { approvalMode: 'suggest' } });
     expect(mockAppProps).toBeDefined(); // Aggiunto
 
     const originalCommand = ['pwd'];
@@ -1544,7 +1490,10 @@ describe('Error Handling (Non-AI)', () => {
     it('should show help and exit with error for an unknown flag', async () => {
       // meow, by default, shows help and exits with 2 for unknown flags.
       // The runCli helper captures stderr and exitCode.
-      const { stderr, exitCode, stdout } = await runCli(['--unknown-super-flag', 'prompt']);
+      const { stderr, exitCode, stdout } = await runCli(
+        ['--unknown-super-flag', 'prompt'],
+        { input: ['prompt'], flags: { unknownSuperFlag: true } }
+      );
       
       // Depending on meow's verbosity and exact version, stderr might contain the unknown flag
       // or just the help text. stdout often contains the main help text.
@@ -1556,7 +1505,7 @@ describe('Error Handling (Non-AI)', () => {
     // Add more tests here if your CLI has specific commands that require arguments.
     // Example:
     // it('should error if a required command argument is missing', async () => {
-    //   const { stderr, exitCode } = await runCli(['mycommand']); // Assuming 'mycommand' needs an arg
+    //   const { stderr, exitCode } = await runCli(['mycommand'], { input: ['mycommand'], flags: {} }); // Assuming 'mycommand' needs an arg
     //   expect(stderr).toContain("Missing required argument for 'mycommand'");
     //   expect(exitCode).not.toBe(0);
     // });
@@ -1613,13 +1562,17 @@ describe('AI Provider API Interactions (with local WireMock)', () => {
       // resetWireMockStubs() was called by suite's beforeEach. Models stub is already set.
       // This test will set up its own specific 418/429 stub for chat completions
       await setupWireMockStub({ // Teapot/Error stub for chat
-        request: { method: 'POST', urlPath: '/v1/chat/completions' /*, headers: { "Authorization": { "equalTo": FAKE_API_KEY_FOR_MOCK_SERVER }} */ }, // Temporarily remove header check for broadest match
+        request: {
+          method: 'POST',
+          urlPath: '/v1/chat/completions',
+          headers: { "Authorization": { "equalTo": `Bearer ${FAKE_API_KEY_FOR_MOCK_SERVER}` } }
+        },
         response: { status: 418, headers: { 'Content-Type': 'application/json' }, jsonBody: { error: { message: 'Caught by broad chat completions stub (teapot)' }}},
         priority: 1 // Highest priority
       });
       
       // For this test, simplify the prompt to maximize chances of an API call
-      const { stderr, stdout, exitCode } = await runCli(['hello']); // Simple prompt
+      const { stderr, stdout, exitCode } = await runCli(['hello'], { input: ['hello'], flags: {} }); // Simple prompt
 
       console.log("Teapot Test STDOUT:", stdout);
       console.log("Teapot Test STDERR:", stderr);
@@ -1643,6 +1596,7 @@ describe('AI Provider API Interactions (with local WireMock)', () => {
 
       const { stderr, exitCode } = await runCli(
         ['prompt that uses MCP'],
+        { input: ['prompt that uses MCP'], flags: {} },
         undefined,
         {
           mcpServers: [{ name: 'FailingMCP', url: 'http://mcp.fail.test', enabled: true }],
@@ -1680,10 +1634,11 @@ describe('AI Provider API Interactions (with local WireMock)', () => {
         // The runCli call will set up the App. The error occurs when the tool is called via simulate.
         await runCli(
           ['use failing_tool from ErrorToolMCP'],
+          { input: ['use failing_tool from ErrorToolMCP'], flags: { approvalMode: 'full-auto' } },
           undefined,
           {
             mcpServers: [{ name: 'ErrorToolMCP', url: 'http://mcp.toolfail.test', enabled: true }],
-            approvalMode: 'full-auto', // For simplicity, auto-approve the failing tool call
+            // approvalMode is set by flags, but keep it here for clarity if baseConfigOverride was used for it
             // AI call details (apiKey, baseURL) are inherited from getBaseMockedConfigForTests
           }
         );
@@ -1741,7 +1696,10 @@ describe('AI Provider API Interactions (with local WireMock)', () => {
       // This runCli call must trigger the agent to attempt a commit.
       // The prompt "patch file.txt and commit" implies this.
       // The App's error handling should catch the commitError and print to stderr.
-      const { stderr: runStderr, exitCode: runExitCode } = await runCli(['--approval-mode', 'full-auto', 'patch file.txt and commit']);
+      const { stderr: runStderr, exitCode: runExitCode } = await runCli(
+        ['--approval-mode', 'full-auto', 'patch file.txt and commit'],
+        { input: ['patch file.txt and commit'], flags: { approvalMode: 'full-auto' } }
+      );
       // Then simulate the patch that would precede the commit.
       expect(mockAppProps).toBeDefined(); // Aggiunto
       // This setup is a bit simplified; actual commit might be triggered by agent.
@@ -1768,7 +1726,7 @@ describe('AI Provider API Interactions (with local WireMock)', () => {
 
       // The most direct way is if the App's main error handler catches it.
       // The `expect(mockAppProps).toBeDefined()` is key.
-      // const { stderr, exitCode } = await runCli(['trigger-commit-action']);
+      // const { stderr, exitCode } = await runCli(['trigger-commit-action'], { input: ['trigger-commit-action'], flags: {} });
       // expect(stderr).toContain('Git commit failed: pre-commit hook failed');
       // expect(exitCode).not.toBe(0);
       // This test is therefore more of a setup demonstration for now.
@@ -1822,6 +1780,7 @@ describe('AI Provider API Interactions (with local WireMock)', () => {
         // Run CLI to set up mockAppProps. The prompt should trigger the AI.
         await runCli(
           ['--approval-mode', 'full-auto', 'prompt for agent to patch /root/locked.txt'],
+          { input: ['prompt for agent to patch /root/locked.txt'], flags: { approvalMode: 'full-auto' } },
           undefined,
           runCliConfigOverride
         );
@@ -1874,7 +1833,10 @@ describe('AI Provider API Interactions (with local WireMock)', () => {
       mockHandleExecCommand.mockRejectedValueOnce(new Error('Command execution failed with exit code 127'));
       // Or: mockHandleExecCommand.mockResolvedValueOnce({ outputText: "", metadata: { error: new Error(...), exitCode: 127, stderr: "command not found" }});
 
-      await runCli(['--approval-mode', 'full-auto', 'run a failing script']);
+      await runCli(
+        ['--approval-mode', 'full-auto', 'run a failing script'],
+        { input: ['run a failing script'], flags: { approvalMode: 'full-auto' } }
+      );
       expect(mockAppProps).toBeDefined(); // Aggiunto
       
       // simulateAgentSuggestsCommand* helpers call mockHandleExecCommand if approved.
@@ -1889,7 +1851,7 @@ describe('AI Provider API Interactions (with local WireMock)', () => {
         undefined         // confirmation getter (not used in full-auto)
       );
       // If App catches and prints:
-      // const { stderr, exitCode } = await runCli(...);
+      // const { stderr, exitCode } = await runCli(rawArgs, meowOverrides, ...);
       // await simulate...
       // expect(stderr).toContain('Failed to execute command: nonexistent-script');
       // expect(exitCode).not.toBe(0);
@@ -1926,7 +1888,7 @@ describe('Platform-Specific Command Execution (Non-Sandboxed)', () => {
   it('should execute POSIX (Linux-like) command as suggested', async () => {
     setMockPlatform('linux');
     // The prompt is generic; the key is the command suggested by the agent simulation
-    await runCli(['list files in current directory']); 
+    await runCli(['list files in current directory'], { input: ['list files in current directory'], flags: {} });
     expect(mockAppProps).toBeDefined(); // Aggiunto
     
     // Simulate agent suggesting 'ls -la'
@@ -1948,7 +1910,10 @@ describe('Platform-Specific Command Execution (Non-Sandboxed)', () => {
     });
 
     it('should execute Windows-specific command (dir) as suggested', async () => {
-      await runCli(['list files in current directory on Windows']);
+      await runCli(
+        ['list files in current directory on Windows'],
+        { input: ['list files in current directory on Windows'], flags: {} }
+      );
       expect(mockAppProps).toBeDefined(); // Aggiunto
       
       // Simulate agent suggesting 'dir /A'
@@ -1963,7 +1928,10 @@ describe('Platform-Specific Command Execution (Non-Sandboxed)', () => {
     });
 
     it('should execute cross-platform command (npm install) as suggested on Windows', async () => {
-      await runCli(['install project dependencies on Windows']);
+      await runCli(
+        ['install project dependencies on Windows'],
+        { input: ['install project dependencies on Windows'], flags: {} }
+      );
       expect(mockAppProps).toBeDefined(); // Aggiunto
       
       // Simulate agent suggesting 'npm install'
@@ -2044,10 +2012,10 @@ describe('File System Interactions', () => {
         // Mock writeFileSync to throw only for the specific path
         // Run CLI to set up App state, AI will suggest the patch.
         // The runCli itself should not cause the error to be thrown and caught by CLI directly for this test structure.
-        await runCli([
-          '--approval-mode', 'full-auto', 
-          `create a file named ${newFilePath} with content "${newFileContent}"`
-        ]);
+        await runCli(
+          ['--approval-mode', 'full-auto', `create a file named ${newFilePath} with content "${newFileContent}"`],
+          { input: [`create a file named ${newFilePath} with content "${newFileContent}"`], flags: { approvalMode: 'full-auto' } }
+        );
         expect(mockAppProps).toBeDefined();
         // Safeguard, ensure approvalMode is correctly set for simulateAgentSuggestsFilePatch
         if (mockAppProps?.config) mockAppProps.config.approvalMode = 'full-auto';
@@ -2109,6 +2077,7 @@ describe('File System Interactions', () => {
     // createTestAppConfig by default uses 'test-provider-default' and 'test-apikey-default'.
     await runCli(
       ['--approval-mode', 'full-auto', `update ${existingFilePath} to ${newContent}`],
+      { input: [`update ${existingFilePath} to ${newContent}`], flags: { approvalMode: 'full-auto' } },
       undefined,
       { provider: 'test-provider-default', apiKey: 'test-apikey-default' }
     );
@@ -2129,6 +2098,7 @@ describe('File System Interactions', () => {
     // Pass other specific config values if different from getBaseMockedConfigForTests.
     await runCli(
       ['--approval-mode', 'full-auto', `delete ${filePathToDelete}`],
+      { input: [`delete ${filePathToDelete}`], flags: { approvalMode: 'full-auto' } },
       undefined,
       { provider: 'test-provider-default', apiKey: 'test-apikey-default' }
     );
@@ -2159,9 +2129,10 @@ describe('File System Interactions', () => {
     // Also ensure provider/apiKey from createTestAppConfig are used if intended.
     await runCli(
       [`update ${filePath}`],
+      { input: [`update ${filePath}`], flags: { approvalMode: 'suggest' } },
       undefined,
       {
-        approvalMode: 'suggest',
+        approvalMode: 'suggest', // This will also be in flags, but repetition for baseConfigOverride is fine
         provider: 'test-provider-default',
         apiKey: 'test-apikey-default',
       }
@@ -2227,6 +2198,7 @@ describe('MCP Integration', () => {
   it('should initialize McpClient for each configured server and call connect', async () => {
     await runCli(
       ['initial prompt for MCP'],
+      { input: ['initial prompt for MCP'], flags: {} },
       undefined,
       { mcpServers: [MCP_SERVER_CONFIG_1] }
     );
@@ -2256,6 +2228,7 @@ describe('MCP Integration', () => {
 
     await runCli(
       ['prompt that might lead to tool discovery'],
+      { input: ['prompt that might lead to tool discovery'], flags: {} },
       undefined,
       { mcpServers: [MCP_SERVER_CONFIG_1] }
     );
@@ -2276,10 +2249,11 @@ describe('MCP Integration', () => {
 
     await runCli(
       ['add 5 and 3 using calculator'],
+      { input: ['add 5 and 3 using calculator'], flags: { approvalMode: 'suggest' } },
       undefined,
       {
         mcpServers: [MCP_SERVER_CONFIG_1],
-        approvalMode: 'suggest', // Ensure confirmation is sought
+        // approvalMode set by flags, kept in baseConfigOverride for clarity if it were different
       }
     );
     expect(mockAppProps).toBeDefined(); // Aggiunto
@@ -2302,10 +2276,11 @@ describe('MCP Integration', () => {
 
     await runCli(
       ['use calculator to add 1 and 1'],
+      { input: ['use calculator to add 1 and 1'], flags: { approvalMode: 'suggest' } },
       undefined,
       {
         mcpServers: [MCP_SERVER_CONFIG_1],
-        approvalMode: 'suggest',
+        // approvalMode set by flags
       }
     );
     expect(mockAppProps).toBeDefined(); // Aggiunto
@@ -2344,10 +2319,11 @@ describe('MCP Integration', () => {
 
     await runCli(
       ['use calculator and weather'],
+      { input: ['use calculator and weather'], flags: { approvalMode: 'full-auto' } },
       undefined,
       {
         mcpServers: [MCP_SERVER_CONFIG_1, MCP_SERVER_CONFIG_2],
-        approvalMode: 'full-auto', // Simplify confirmation for this test
+        // approvalMode set by flags
       }
     );
     expect(mockAppProps).toBeDefined(); // Aggiunto
@@ -2463,7 +2439,7 @@ describe('GitHub Integration', () => {
       suiteMockGetGitHubToken.mockResolvedValue(null); 
       suiteMockAuthWithGitHubDeviceFlow.mockResolvedValue(undefined); 
 
-      const { exitCode } = await runCli(['auth', 'github']);
+      const { exitCode } = await runCli(['auth', 'github'], { input: ['auth', 'github'], flags: {} });
 
       expect(suiteMockAuthWithGitHubDeviceFlow).toHaveBeenCalled();
       // stdout/stderr are likely empty due to immediate process.exit
@@ -2475,7 +2451,7 @@ describe('GitHub Integration', () => {
       const authError = new Error('GitHub auth device flow failed');
       suiteMockAuthWithGitHubDeviceFlow.mockRejectedValue(authError); 
 
-      const { exitCode, stderr } = await runCli(['auth', 'github']);
+      const { exitCode, stderr } = await runCli(['auth', 'github'], { input: ['auth', 'github'], flags: {} });
       
       expect(suiteMockAuthWithGitHubDeviceFlow).toHaveBeenCalled();
       // stderr might be empty if process.exit happens too fast,
@@ -2497,7 +2473,7 @@ describe('GitHub Integration', () => {
       suiteMockGetGitHubToken.mockResolvedValue('existing-dummy-gh-token'); 
       // suiteMockAuthWithGitHubDeviceFlow will use its default success mock from beforeEach
 
-      const { exitCode } = await runCli(['auth', 'github']);
+      const { exitCode } = await runCli(['auth', 'github'], { input: ['auth', 'github'], flags: {} });
 
       // Assert CLI's actual behavior (goes to device flow and "succeeds")
       expect(suiteMockAuthWithGitHubDeviceFlow).toHaveBeenCalled(); 
@@ -2507,7 +2483,10 @@ describe('GitHub Integration', () => {
 
   describe('CLI flags --github-repo and --github-branch', () => {
     it('should pass valid --github-repo and --github-branch to App props', async () => {
-      await runCli(['--github-repo', 'owner/repo', '--github-branch', 'feature-branch', 'prompt']);
+      await runCli(
+        ['--github-repo', 'owner/repo', '--github-branch', 'feature-branch', 'prompt'],
+        { input: ['prompt'], flags: { githubRepo: 'owner/repo', githubBranch: 'feature-branch' } }
+      );
       expect(mockAppProps).toBeDefined(); // Aggiunto
       
       expect(mockAppProps).toBeDefined();
@@ -2516,7 +2495,10 @@ describe('GitHub Integration', () => {
     });
 
     it('should pass only --github-repo to App props if --github-branch is not provided', async () => {
-      await runCli(['--github-repo', 'owner/another-repo', 'prompt']);
+      await runCli(
+        ['--github-repo', 'owner/another-repo', 'prompt'],
+        { input: ['prompt'], flags: { githubRepo: 'owner/another-repo' } }
+      );
       expect(mockAppProps).toBeDefined(); // Aggiunto
 
       expect(mockAppProps).toBeDefined();
@@ -2526,7 +2508,10 @@ describe('GitHub Integration', () => {
 
     it('should exit with error for invalid --github-repo format', async () => {
       // This validation happens in cli.tsx before App is typically rendered with these props.
-      const { stderr, stdout, exitCode } = await runCli(['--github-repo', 'invalidformat', 'prompt']);
+      const { stderr, stdout, exitCode } = await runCli(
+        ['--github-repo', 'invalidformat', 'prompt'],
+        { input: ['prompt'], flags: { githubRepo: 'invalidformat' } }
+      );
       // mockAppProps potrebbe non essere definito.
       
       expect(stderr).toMatch(/Error: Invalid --github-repo format. Expected 'owner\/repo'./i);
@@ -2537,7 +2522,10 @@ describe('GitHub Integration', () => {
 
     it('should exit with error if --github-branch is used without --github-repo', async () => {
       // This validation also happens in cli.tsx.
-      const { stderr, exitCode } = await runCli(['--github-branch', 'feature-branch', 'prompt']);
+      const { stderr, exitCode } = await runCli(
+        ['--github-branch', 'feature-branch', 'prompt'],
+        { input: ['prompt'], flags: { githubBranch: 'feature-branch' } }
+      );
       // mockAppProps potrebbe non essere definito.
       
       expect(stderr).toMatch(/Error: --github-branch cannot be used without --github-repo./i);
@@ -2681,7 +2669,10 @@ describe('Suggest Mode (File Patches)', () => {
 
   it('should apply patch if user approves in suggest mode', async () => {    
     mockUserConfirmationGetter = vi.fn(async () => true); // User approves
-    await runCli(['apply this patch to file.txt']); // Sets mockAppProps
+    await runCli(
+      ['apply this patch to file.txt'],
+      { input: ['apply this patch to file.txt'], flags: {} }
+    ); // Sets mockAppProps
     expect(mockAppProps).toBeDefined(); // Aggiunto
 
     expect(mockAppProps).toBeDefined();
@@ -2696,7 +2687,10 @@ describe('Suggest Mode (File Patches)', () => {
 
   it('should NOT apply patch if user rejects in suggest mode', async () => {
     mockUserConfirmationGetter.mockReset().mockResolvedValue(false); // User rejects
-    await runCli(['apply this patch to file.txt']); // Sets mockAppProps
+    await runCli(
+      ['apply this patch to file.txt'],
+      { input: ['apply this patch to file.txt'], flags: {} }
+    ); // Sets mockAppProps
     expect(mockAppProps).toBeDefined(); // Aggiunto
 
     expect(mockAppProps).toBeDefined();
@@ -2739,7 +2733,10 @@ describe('Auto-Edit Mode', () => {
   }); // Closes beforeEach for Auto-Edit Mode
 
   it('should apply file patch WITHOUT user confirmation', async () => {
-    await runCli([...autoEditArgs, 'apply this patch']);
+    await runCli(
+      [...autoEditArgs, 'apply this patch'],
+      { input: ['apply this patch'], flags: { approvalMode: 'auto-edit' } }
+    );
     expect(mockAppProps).toBeDefined(); 
     // console.log(`[DEBUG Auto-Edit Test] mockAppProps.config.approvalMode after runCli: ${mockAppProps?.config?.approvalMode}`); // DEBUG REMOVED
     
@@ -2753,7 +2750,10 @@ describe('Auto-Edit Mode', () => {
 
   it('should require user confirmation for shell commands and execute if approved', async () => {
     mockUserConfirmationGetter = vi.fn(async () => true); // User approves command
-    await runCli([...autoEditArgs, 'run this command']);
+    await runCli(
+      [...autoEditArgs, 'run this command'],
+      { input: ['run this command'], flags: { approvalMode: 'auto-edit' } }
+    );
     expect(mockAppProps).toBeDefined(); // Aggiunto
 
     expect(mockAppProps).toBeDefined();
@@ -2798,7 +2798,10 @@ describe('Full-Auto Mode', () => {
   }); // Closes beforeEach for Full-Auto Mode
 
   it('should apply file patch WITHOUT user confirmation', async () => {
-    await runCli([...fullAutoArgs, 'auto apply this patch']);
+    await runCli(
+      [...fullAutoArgs, 'auto apply this patch'],
+      { input: ['auto apply this patch'], flags: { approvalMode: 'full-auto' } }
+    );
     expect(mockAppProps).toBeDefined(); // Aggiunto
     
     const patchContent = "dummy patch content for full-auto";
@@ -2809,7 +2812,10 @@ describe('Full-Auto Mode', () => {
   });
 
   it('should execute shell command WITHOUT user confirmation', async () => {
-    await runCli([...fullAutoArgs, 'auto run this command']);
+    await runCli(
+      [...fullAutoArgs, 'auto run this command'],
+      { input: ['auto run this command'], flags: { approvalMode: 'full-auto' } }
+    );
     expect(mockAppProps).toBeDefined(); // Aggiunto
     
     expect(mockAppProps).toBeDefined();
